@@ -1,0 +1,5 @@
+#+TITLE: lumberjack
+
+a text editor meant to do just barely enough to let me experiment with
+treesitter and other stuff. meant for personal use by me, will have
+personal configuration baked in.
