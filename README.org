@@ -7,7 +7,7 @@ personal configuration baked in.
 ** building
 as of now, building is mostly useless. instead, try:
  #+BEGIN_SRC sh
-rustc src/main.rs -C opt-level=0 --crate-name lumberjack | rustfilt > src/lumberjack.s
+rustc src/main.rs -C opt-level=0 --emit asm -o - --crate-name lumberjack | rustfilt > src/lumberjack.s
 #+END_SRC
 
 currently the primary useful property to look out for is the type
