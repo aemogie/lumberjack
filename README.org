@@ -3,3 +3,14 @@
 a text editor meant to do just barely enough to let me experiment with
 treesitter and other stuff. meant for personal use by me, will have
 personal configuration baked in.
+
+** building
+as of now, building is mostly useless. instead, try:
+ #+BEGIN_SRC sh
+rustc src/main.rs -C opt-level=0 --crate-name lumberjack | rustfilt > src/lumberjack.s
+#+END_SRC
+
+currently the primary useful property to look out for is the type
+checking provided by ~rustc~ or ~rust-analyzer~. after that would be
+ensuring the generated assembly remains minimal. search for
+~lumberjack~ in src/lumberjack.s to find any related code.

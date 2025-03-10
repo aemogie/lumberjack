@@ -30,6 +30,7 @@
               pre-commit
               rustPackages.clippy
               rust-analyzer
+              rustfilt # demangle `rustc --emit asm`
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
           };
