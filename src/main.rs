@@ -3,6 +3,7 @@
 use std::marker::PhantomData;
 
 mod gl;
+mod shader;
 
 pub struct Position {
     x: u32,
