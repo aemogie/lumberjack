@@ -2,7 +2,7 @@ use std::{fs, path};
 
 use gl_generator::{Api, Fallbacks, GlobalGenerator, Profile, Registry};
 
-const PATH: &'static str = "src/generated/gl.rs";
+const PATH: &'static str = "src/gl.rs";
 
 fn main() {
     let path = path::Path::new(PATH);
