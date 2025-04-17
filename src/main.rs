@@ -2,8 +2,11 @@
 
 use std::marker::PhantomData;
 
+mod comphacks;
 mod gl;
 mod shader;
+
+use comphacks::list::foo;
 
 pub struct Position {
     x: u32,
@@ -154,6 +157,7 @@ impl<Layout: LayoutAlgorithm>
 }
 
 fn main() {
+    foo();
     UIElement::new(
         Position { x: 10, y: 20 },
         LinearLayout::<HorizontalAxis>::new(),
