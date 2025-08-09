@@ -1,0 +1,35 @@
+#+title: lumberjack
+
+trying to write a text editor in c. possibly my first ever proper c software.
+
+* goals
++ keep it simple
++ unity build, no explicit link dependencies (ideally compiling and
+  running is ~cc ./main.c && ./a.out~)
++ no platforms supported other than what i use. dont even try to
+  wrangle cross platform
++ multi threading
+  + not sure how applicable it is
+  + the basic architecture is pretty sequential
+  + and the actual rendering is on the gpu
+  + maybe will introduce when things that are too slow to be on the render
+    loop are introduced? (e.g. parsing, highlighting, LSPs, etc)
+  + on other hand wanna see how far i can go without these tho
+
+* architecture (so far)
++ text file -> gap buffer (mmap ideally for simplicity)
++ gap buffer -> viewport
++ window input -> input handling (a massive switch case or jump table)
++ input [ascii printable] -> gap buffer
++ input [control] -> viewport's cursor
+
+** viewport
+this is the hard part for me. need to iron this out.
+
+not graphical viewport, just char[w * h]. 0x20 (space) to pad the grid
+
+parsed out from gap buffer every frame, but only wrt to cursor to avoid work.
+
+we dont want to backscan from the cursor for lines. we need a line start.
+
+scrolling/cursor movement is also just viewport changes so ring buffers would be good for this.
