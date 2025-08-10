@@ -28,8 +28,10 @@ this is the hard part for me. need to iron this out.
 
 not graphical viewport, just char[w * h]. 0x20 (space) to pad the grid
 
-parsed out from gap buffer every frame, but only wrt to cursor to avoid work.
+some intermediate array of string view cache for some const N lines. each element is a line
 
-we dont want to backscan from the cursor for lines. we need a line start.
+use line list to refresh viewport buffer
 
-scrolling/cursor movement is also just viewport changes so ring buffers would be good for this.
+also remember to update line view on inputs (this sounds extrememly finicky)
+
+both line cache and viewport buffer can be a ring buffer. i think both have similar benefits
