@@ -4,8 +4,9 @@ trying to write a text editor in c. possibly my first ever proper c software.
 
 * goals
 + keep it simple
-+ unity build, no explicit link dependencies (ideally compiling and
-  running is ~cc ./main.c && ./a.out~)
++ unity build
+  + +no explicit link dependencies (ideally compiling and running is ~cc ./main.c && ./a.out~)+
+  + seems the linux world hates simple software. ill be linking against crap
 + no platforms supported other than what i use. dont even try to
   wrangle cross platform
 + multi threading
