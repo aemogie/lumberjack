@@ -28,11 +28,14 @@ pub trait SizingAlgorithm {
     fn size(self, state: Self::State) -> Size;
 }
 
-pub struct FixedSizing(Size);
-impl SizingAlgorithm for FixedSizing {
+pub struct FixedSizing<const WIDTH: u32, const HEIGHT: u32>;
+impl<const WIDTH: u32, const HEIGHT: u32> SizingAlgorithm for FixedSizing<WIDTH, HEIGHT> {
     type State = ();
     fn size(self, _: ()) -> Size {
-        self.0
+        Size {
+            width: WIDTH,
+            height: HEIGHT,
+        }
     }
 }
 
@@ -70,6 +73,21 @@ impl<Axis_: Axis> LinearLayout<Axis_> {
     }
 }
 
+impl<Axis_: Axis> LayoutAlgorithm for LinearLayout<Axis_> {
+    fn layout_child(&mut self, parent_pos: &Position, child_size: &Size) -> Position {
+        let pos = Position {
+            x: parent_pos.x + self.head.width,
+            y: parent_pos.y + self.head.height,
+        };
+        Axis_::advance(&mut self.head, child_size);
+        pos
+    }
+
+    fn head(self) -> Size {
+        self.head
+    }
+}
+
 pub trait Axis {
     fn advance(head: &mut Size, child: &Size);
 }
@@ -86,21 +104,6 @@ impl Axis for VerticalAxis {
     fn advance(head: &mut Size, child: &Size) {
         head.width = std::cmp::max(head.width, child.width);
         head.height += child.height;
-    }
-}
-
-impl<Axis_: Axis> LayoutAlgorithm for LinearLayout<Axis_> {
-    fn layout_child(&mut self, parent_pos: &Position, child_size: &Size) -> Position {
-        let pos = Position {
-            x: parent_pos.x + self.head.width,
-            y: parent_pos.y + self.head.height,
-        };
-        Axis_::advance(&mut self.head, child_size);
-        pos
-    }
-
-    fn head(self) -> Size {
-        self.head
     }
 }
 
@@ -157,10 +160,9 @@ impl<Layout: LayoutAlgorithm>
 }
 
 fn main() {
-    foo();
-    UIElement::new(
-        Position { x: 10, y: 20 },
-        LinearLayout::<HorizontalAxis>::new(),
-    )
-    .finalize();
+    let pos = Position { x: 10, y: 20 };
+    let layout = LinearLayout::<HorizontalAxis>::new();
+    let uielement = UIElement::new(pos, layout);
+    let quad = uielement.finalize();
+    _ = quad;
 }

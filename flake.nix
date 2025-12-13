@@ -31,6 +31,7 @@
               rustPackages.clippy
               rust-analyzer
               rustfilt # demangle `rustc --emit asm`
+              gdb
             ];
             RUST_SRC_PATH = rustPlatform.rustLibSrc;
           };
