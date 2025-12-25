@@ -1,4 +1,1 @@
-PointerAlignment: Left
-AlignAfterOpenBracket: BlockIndent
-BinPackParameters: false
-BinPackArguments: false
+BasedOnStyle: GNU
