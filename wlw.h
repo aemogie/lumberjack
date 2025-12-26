@@ -153,8 +153,9 @@ wlw_new_id
 wlw_next_id ()
 {
   // 1 is reserved for wl_display
-  static wlw_word next = 2;
-  return (wlw_new_id){ .repr = next++ };
+  static wlw_word prev = 1;
+  prev++;
+  return (wlw_new_id){ .repr = prev };
 }
 // reserved
 const wlw_object wl_display = { .id = 1 };
@@ -169,33 +170,35 @@ enum _wl_display_e
 };
 wlw_object
 wl_display_get_registry (wlw_conn conn, wlw_object wl_display,
-                         wlw_new_id new_id)
+                         wlw_new_id registry)
 {
   assert (wl_display.id == 1);
   struct
   {
     wlw_header hdr;
-    wlw_new_id new_id;
+    wlw_new_id registry;
   } msg;
   msg.hdr.object_id = wl_display;
   msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_get_registry;
-  msg.new_id = new_id;
+  msg.registry = registry;
   wlw_send (conn, &msg.hdr);
-  return (wlw_object){ .id = new_id.repr };
+  return (wlw_object){ .id = registry.repr };
 }
 
 wlw_object
-wl_display_sync (wlw_conn conn, wlw_object wl_display, wlw_new_id new_id)
+wl_display_sync (wlw_conn conn, wlw_object wl_display, wlw_new_id callback)
 {
   assert (wl_display.id == 1);
   struct
   {
     wlw_header hdr;
+    wlw_new_id callback;
   } msg;
   msg.hdr.object_id = wl_display;
   msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_sync;
+  msg.callback = callback;
   wlw_send (conn, &msg.hdr);
-  return (wlw_object){ .id = new_id.repr };
+  return (wlw_object){ .id = callback.repr };
 }
 
 enum _wl_registry_e
@@ -231,23 +234,36 @@ int
 main ()
 {
   wlw_conn conn = wlw_open ();
-  printf ("hello wayland\n");
 
   wlw_object wl_registry
       = wl_display_get_registry (conn, wl_display, wlw_next_id ());
-
-  (void)wl_registry;
+  wlw_object wl_callback = wl_display_sync (conn, wl_display, wlw_next_id ());
 
   static wlw_word msg[256];
   for (;;)
     {
       wlw_recv (conn, msg);
-      wlw_uint *name;
-      wlw_string *interface;
-      wlw_uint *version;
-      wl_registry_global (wl_registry, msg, &name, &interface, &version);
-      printf ("wl_registry:global(name=%d, interface=%s, version=%d)\n", *name,
-              interface->str, *version);
+      wlw_header *hdr = (wlw_header *)msg;
+      if (hdr->object_id.id == wl_callback.id)
+        {
+          break;
+        }
+      else if (hdr->object_id.id == wl_registry.id)
+        {
+          uint16_t opcode = hdr->size_opcode & ((1 << 16) - 1);
+          assert (opcode == _wl_registry_e_global);
+
+          wlw_uint *name;
+          wlw_string *interface;
+          wlw_uint *version;
+          wl_registry_global (wl_registry, msg, &name, &interface, &version);
+          printf ("wl_registry:global(name=%d, interface=%s, version=%d)\n",
+                  *name, interface->str, *version);
+        }
+      else
+        {
+          assert (0 && "unsupported");
+        }
     }
 }
 #endif
