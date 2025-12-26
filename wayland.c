@@ -10,19 +10,20 @@
 #define __HERE(f, l) ___HERE (f, l)
 #define ___HERE(f, l) f ":" #l
 
-#ifndef __WAYLAND_WIRE_H
-#define __WAYLAND_WIRE_H
+#ifndef __WLW_H
+#define __WLW_H
 
 typedef struct
 {
   int fd;
 } wlw_conn;
 
+// wire types
 typedef uint32_t wlw_word;
 typedef wlw_word wlw_uint;
 typedef struct
 {
-  wlw_word repr;
+  wlw_word id;
 } wlw_object;
 
 typedef struct
@@ -38,23 +39,19 @@ typedef struct
 
 typedef struct
 {
-  wlw_object object;
+  wlw_object object_id;
   wlw_word size_opcode;
 } wlw_header;
 
-// to be correct message "has" header, but as a base class a message
-// only guarantees a header, ie its identical structurally
-typedef wlw_header wlw_msg;
-
 wlw_conn wlw_open ();
 #define WLW_MSG_SIZE 256
-void wlw_send (wlw_conn self, wlw_msg *msg);
+void wlw_send (wlw_conn self, wlw_header *hdr);
 uint16_t wlw_recv (wlw_conn self, wlw_word out[WLW_MSG_SIZE]);
 
-#endif // __WAYLAND_WIRE_H
+#endif // __WLW_H
 
-#if defined(WAYLAND_WIRE_IMPLEMENTATION) && !defined(WAYLAND_WIRE_IMPLEMENTED)
-#define WAYLAND_WIRE_IMPLEMENTED
+#if defined(WLW_IMPLEMENTATION) && !defined(WLW_IMPLEMENTED)
+#define WLW_IMPLEMENTED
 
 __attribute__ ((warn_unused_result)) wlw_conn
 wlw_open ()
@@ -81,10 +78,19 @@ wlw_open ()
 }
 
 void
-wlw_send (wlw_conn self, wlw_msg *msg)
+wlw_send (wlw_conn self, wlw_header *hdr)
 {
-  int size = msg->size_opcode >> 16;
-  write (self.fd, msg, size);
+  uint16_t size = hdr->size_opcode >> 16;
+  /*
+  uint16_t len = size / sizeof (wlw_word);
+  printf ("C->S (%d)", size);
+  for (uint16_t i = 0; i < len; i++)
+    {
+      printf (" %08x", ((wlw_word *)hdr)[i]);
+    }
+  printf ("\n");
+  */
+  write (self.fd, hdr, size);
 }
 
 uint16_t
@@ -108,6 +114,16 @@ retry:
   memcpy (out, &buf[next_frame], size);
   next_frame += size;
 
+  /*
+  uint16_t len = size / sizeof (wlw_word);
+  printf ("S->C (%d)", size);
+  for (uint16_t i = 0; i < len; i++)
+    {
+      printf (" %08x", ((wlw_word *)out)[i]);
+    }
+  printf ("\n");
+  */
+
   return size;
 
 refill_and_retry:
@@ -123,35 +139,93 @@ refill_and_retry:
   goto retry;
 }
 
-#endif // WAYLAND_WIRE_IMPLEMENTATION
+#endif // WLW_IMPLEMENTATION
 
 #ifdef WLW_EXAMPLE
 #undef WLW_EXAMPLE
 
 #include <stdio.h>
 
-#define WAYLAND_WIRE_IMPLEMENTATION
+#define WLW_IMPLEMENTATION
 #include __FILE__
 
-static const wlw_object wl_display = { .repr = 1 };
-static const wlw_object wl_registry = { .repr = 2 };
-
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wgnu-variable-sized-type-not-at-end"
-typedef struct
+wlw_new_id
+wlw_next_id ()
 {
-  wlw_msg parent;
-  wlw_new_id new_id;
-} wl_display_get_registry;
-
-typedef struct
+  // 1 is reserved for wl_display
+  static wlw_word next = 2;
+  return (wlw_new_id){ .repr = next++ };
+}
+// reserved
+const wlw_object wl_display = { .id = 1 };
+enum _wl_display_r
 {
-  wlw_msg parent;
-  wlw_uint name;
-  wlw_string interface;
-  wlw_uint __version;
-} wl_registry_global;
-#pragma GCC diagnostic pop
+  _wl_display_r_sync,
+  _wl_display_r_get_registry,
+};
+enum _wl_display_e
+{
+  _wl_display_e_global,
+};
+wlw_object
+wl_display_get_registry (wlw_conn conn, wlw_object wl_display,
+                         wlw_new_id new_id)
+{
+  assert (wl_display.id == 1);
+  struct
+  {
+    wlw_header hdr;
+    wlw_new_id new_id;
+  } msg;
+  msg.hdr.object_id = wl_display;
+  msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_get_registry;
+  msg.new_id = new_id;
+  wlw_send (conn, &msg.hdr);
+  return (wlw_object){ .id = new_id.repr };
+}
+
+wlw_object
+wl_display_sync (wlw_conn conn, wlw_object wl_display, wlw_new_id new_id)
+{
+  assert (wl_display.id == 1);
+  struct
+  {
+    wlw_header hdr;
+  } msg;
+  msg.hdr.object_id = wl_display;
+  msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_sync;
+  wlw_send (conn, &msg.hdr);
+  return (wlw_object){ .id = new_id.repr };
+}
+
+enum _wl_registry_e
+{
+  _wl_registry_e_global,
+};
+
+void
+wl_registry_global (wlw_object wl_registry, wlw_word *msg, wlw_uint **out_name,
+                    wlw_string **out_interface, wlw_uint **out_version)
+{
+  uint8_t *msg_c = (uint8_t *)msg;
+  wlw_header *hdr = (wlw_header *)msg;
+  assert (hdr->object_id.id == wl_registry.id);
+  uint16_t opcode = hdr->size_opcode & ((1 << 16) - 1);
+  assert (opcode == _wl_registry_e_global);
+  msg_c += sizeof (wlw_header);
+
+  *out_name = (wlw_uint *)msg_c;
+  msg_c += sizeof (wlw_uint);
+
+  *out_interface = (wlw_string *)msg_c;
+  wlw_word len = (*out_interface)->len;
+  len += sizeof (len); // the field `len` itself
+  len = (len + sizeof (len) - 1) & ~(sizeof (len) - 1);
+  msg_c += len;
+
+  *out_version = (wlw_uint *)msg_c;
+  msg_c += sizeof (wlw_uint);
+}
 
 int
 main ()
@@ -159,18 +233,21 @@ main ()
   wlw_conn conn = wlw_open ();
   printf ("hello wayland\n");
 
-  wl_display_get_registry msg;
-  msg.parent.object = wl_display;
-  msg.parent.size_opcode = (sizeof (wl_display_get_registry)) << 16 | 1;
-  msg.new_id = (wlw_new_id){ .repr = wl_registry.repr };
-  wlw_send (conn, &msg.parent);
+  wlw_object wl_registry
+      = wl_display_get_registry (conn, wl_display, wlw_next_id ());
 
-  static wlw_word out[256];
+  (void)wl_registry;
+
+  static wlw_word msg[256];
   for (;;)
     {
-      wlw_recv (conn, out);
-      wl_registry_global *g = (wl_registry_global *)out;
-      printf ("%s@%d\n", g->interface.str, g->name);
+      wlw_recv (conn, msg);
+      wlw_uint *name;
+      wlw_string *interface;
+      wlw_uint *version;
+      wl_registry_global (wl_registry, msg, &name, &interface, &version);
+      printf ("wl_registry:global(name=%d, interface=%s, version=%d)\n", *name,
+              interface->str, *version);
     }
 }
 #endif
