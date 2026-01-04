@@ -270,14 +270,18 @@ wlw_bookkeep_obj_typeof (wlw_obj_map *obj_map, wlw_object object)
 }
 
 void
-wlw_bookkeep_obj_setup_reserved (wlw_obj_map *obj_map)
+wlw_bookkeep_obj_setup_reserved (wlw_obj_map *obj_map,
+                                 wlw_object *wlw_null_obj,
+                                 wlw_object *wl_display)
 {
+  // assert wlw_state and in turn wlw_obj_map has been zero intialised
   assert (obj_map->free_tail == 0);
-  obj_map->free_tail--; // underflows i assume but thats fine
-  wlw_bookkeep_obj_bind (obj_map, wlw_null_i,
-                         wlw_bookkeep_obj_genid (obj_map));
-  wlw_bookkeep_obj_bind (obj_map, wlw_display_i,
-                         wlw_bookkeep_obj_genid (obj_map));
+  // this underflows, but genid overflows it back to zero
+  obj_map->free_tail--;
+  *wlw_null_obj = wlw_bookkeep_obj_bind (obj_map, wlw_null_i,
+                                         wlw_bookkeep_obj_genid (obj_map));
+  *wl_display = wlw_bookkeep_obj_bind (obj_map, wlw_display_i,
+                                       wlw_bookkeep_obj_genid (obj_map));
 }
 
 typedef struct
@@ -293,8 +297,6 @@ typedef struct
   wlw_obj_map obj_map;
 } wlw_state;
 
-// reserved
-const wlw_object wl_display = { .id = 1 };
 enum _wl_display_r
 {
   _wl_display_r_sync,
@@ -368,7 +370,8 @@ main ()
 {
   wlw_state wlw = { 0 };
   wlw_open (&wlw.io);
-  wlw_bookkeep_obj_setup_reserved (&wlw.obj_map);
+  wlw_object wlw_null_obj, wl_display;
+  wlw_bookkeep_obj_setup_reserved (&wlw.obj_map, &wlw_null_obj, &wl_display);
 
   printf ("listing all globals\n");
   wl_display_get_registry (&wlw, wl_display,
