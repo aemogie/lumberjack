@@ -6,8 +6,8 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#ifndef __WLW_H
-#define __WLW_H
+#ifndef _WLW_H
+#define _WLW_H
 
 // wire types
 typedef uint32_t wlw_word;
@@ -61,7 +61,7 @@ void wlw_open (wlw_io_state *io);
 void wlw_send (wlw_io_state *io, wlw_raw_msg *msg);
 uint16_t wlw_recv (wlw_io_state *io, wlw_raw_msg *msg);
 
-#define __WLW_SIZED_WIRE_TYPES(X)                                             \
+#define _WLW_SIZED_WIRE_TYPES(X)                                              \
   X (header)                                                                  \
   X (object)                                                                  \
   X (uint)                                                                    \
@@ -70,13 +70,13 @@ uint16_t wlw_recv (wlw_io_state *io, wlw_raw_msg *msg);
 // returns len in number of wlw_words
 // not bytes because if a field is not aligned thats a bug
 #define X(type) uint16_t wlw_read_##type (wlw_word *head, wlw_##type **out);
-__WLW_SIZED_WIRE_TYPES (X)
+_WLW_SIZED_WIRE_TYPES (X)
 #undef X
 
 // dynamically sized, need to read from head to get size
 uint16_t wlw_read_string (wlw_word *head, wlw_string **out);
 
-#endif // __WLW_H
+#endif // _WLW_H
 
 #if defined(WLW_IMPLEMENTATION) && !defined(WLW_IMPLEMENTED)
 #define WLW_IMPLEMENTED
@@ -189,7 +189,7 @@ refill_and_retry:
     return sizeof (wlw_##type) / sizeof (wlw_word);                           \
   }
 
-__WLW_SIZED_WIRE_TYPES (X)
+_WLW_SIZED_WIRE_TYPES (X)
 #undef X
 
 inline uint16_t
