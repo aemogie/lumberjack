@@ -9,8 +9,40 @@
 #ifndef _WLW_H
 #define _WLW_H
 
-// wire types
 typedef uint32_t wlw_word;
+typedef uint8_t wlw_byte;
+
+// taxonomy note,
+// "size" = in bytes
+// "len" = count in array type, in this case wlw_word
+
+// spec defines that size always fits top 16 bits of (wlw_header.size_opcode)
+typedef uint16_t wlw_msg_size;
+// only bottom 14 bits should ever be used, because,
+// sizeof(wlw_word) == 4, 4 - 1 == 0b11
+// two bits are unused
+typedef uint16_t wlw_msg_len;
+
+// division typically rounds down, this rounds up.
+/*
+"a"   :: the dividend
+"+ b" :: bias it upwards by the divisor
+"- 1" :: avoids doubly rounding up if "a" is already divisible by "b"
+"/ b" :: proceed with round-down division as normal, on the biased dividend
+*/
+#define wlw_divide_up(a, b) ((a + b - 1) / b)
+
+// takes a size in bytes and returns it as count of wlw_word, aligned up
+// wlw_msg_size -> wlw_msg_len
+#define wlw_size_to_len(size)                                                 \
+  ((wlw_msg_len)wlw_divide_up ((wlw_msg_size)(size), sizeof (wlw_word)))
+#define wlw_len_to_size(len)                                                  \
+  ((wlw_msg_size)((wlw_msg_len)(len) * sizeof (wlw_word)))
+
+#define WLW_MSG_MAX_LEN ((wlw_msg_len)256)
+#define WLW_IO_BUFFER_SIZE ((wlw_msg_size)wlw_len_to_size (WLW_MSG_MAX_LEN))
+
+// wire types
 typedef wlw_word wlw_uint;
 typedef struct
 {
@@ -34,32 +66,28 @@ typedef struct
   wlw_word size_opcode;
 } wlw_header;
 
-#define WLW_MSG_MAX_LEN 256
-
 typedef struct
 {
   wlw_header hdr;
-  wlw_word
-      payload[WLW_MSG_MAX_LEN - (sizeof (wlw_header) / sizeof (wlw_word))];
+  wlw_word payload[WLW_MSG_MAX_LEN - wlw_size_to_len (sizeof (wlw_header))];
 } wlw_msg;
 // because i dont trust myself to do math
-_Static_assert (sizeof (wlw_msg) <= (WLW_MSG_MAX_LEN * sizeof (wlw_word)),
+_Static_assert (sizeof (wlw_msg) == wlw_len_to_size (WLW_MSG_MAX_LEN),
                 "raw message struct is too large");
 
-#define WLW_IO_BUFFER_SIZE (WLW_MSG_MAX_LEN * sizeof (wlw_word))
 typedef struct
 {
   // rw socket
   int fd;
   // reader state
-  uint16_t next_frame;
-  uint16_t read_end;
-  uint8_t buf[WLW_IO_BUFFER_SIZE];
+  wlw_msg_size next_frame;
+  wlw_msg_size read_end;
+  wlw_byte buf[WLW_IO_BUFFER_SIZE];
 } wlw_io_state;
 
 void wlw_open (wlw_io_state *io);
 void wlw_send (wlw_io_state *io, wlw_msg *msg);
-uint16_t wlw_recv (wlw_io_state *io, wlw_msg *msg);
+wlw_msg_size wlw_recv (wlw_io_state *io, wlw_msg *msg);
 
 // returned pointer is always same as dereferencing what was passed in
 // the only utility of these functions is that they advance the head
@@ -110,18 +138,19 @@ wlw_open (wlw_io_state *io)
 void
 wlw_send (wlw_io_state *io, wlw_msg *msg)
 {
-  uint16_t size = msg->hdr.size_opcode >> 16;
-  /*
-  uint16_t len = size / sizeof (wlw_word);
+  wlw_msg_size size = msg->hdr.size_opcode >> 16;
+
+#if 0
+  wlw_msg_len len = wlw_size_to_len (size);
   printf ("C->S (%d)", size);
-  for (uint16_t i = 0; i < len; i++)
+  for (wlw_msg_len i = 0; i < len; i++)
     {
       printf (" %08x", ((wlw_word *)msg)[i]);
     }
   printf ("\n");
-  */
-  uint8_t *end = &((uint8_t *)msg)[size];
+#endif
 
+  wlw_byte *end = &((wlw_byte *)msg)[size];
   do
     {
       size -= write (io->fd, end - size, size);
@@ -129,17 +158,17 @@ wlw_send (wlw_io_state *io, wlw_msg *msg)
   while (__builtin_expect (size, 0));
 }
 
-uint16_t
+wlw_msg_size
 wlw_recv (wlw_io_state *io, wlw_msg *msg)
 {
 
-  uint16_t remainder;
+  wlw_msg_size remainder;
 retry:
   remainder = io->read_end - io->next_frame;
   if (remainder < sizeof (wlw_header))
     goto refill_and_retry;
 
-  uint16_t size
+  wlw_msg_size size
       = (((wlw_header *)(&io->buf[io->next_frame]))->size_opcode) >> 16;
   assert (size < sizeof (io->buf));
   if (remainder < size)
@@ -148,15 +177,15 @@ retry:
   memcpy (msg, &io->buf[io->next_frame], size);
   io->next_frame += size;
 
-  /*
-  uint16_t len = size / sizeof (wlw_word);
+#if 0
+  wlw_msg_len len = wlw_size_to_len (size);
   printf ("S->C (%d)", size);
-  for (uint16_t i = 0; i < len; i++)
+  for (wlw_msg_len i = 0; i < len; i++)
     {
-      printf (" %08x", ((wlw_word *)out)[i]);
+      printf (" %08x", ((wlw_word *)msg)[i]);
     }
   printf ("\n");
-  */
+#endif
 
   return size;
 
@@ -199,18 +228,8 @@ wlw_read_string (wlw_word **head)
   wlw_string *ret = (wlw_string *)(*head);
 
   (*head)++; // skip the length field
-
   // align to wlw_word boundary
-  // taxonomy note: "size" = in bytes, "len" = count in array type
-  uint16_t str_size = ret->len;
-  uint16_t word_size = sizeof (wlw_word);
-  // this will be used bias the division up, -1 ensures exact
-  // multiples dont cross the boundary twice
-  uint16_t round_up_bias = word_size - 1;
-  uint16_t biased_size = str_size + round_up_bias;
-  uint16_t str_len = biased_size / word_size;
-  *head += str_len;
-
+  *head += wlw_size_to_len (ret->len);
   return ret;
 }
 
@@ -234,6 +253,7 @@ typedef enum
 #define X(name) wlw_##name##_i,
   WLW_INTERFACES (X)
 #undef X
+      _wlw_i_size,
 } wlw_interface;
 
 const char *wlw_interface_names[] = {
@@ -249,6 +269,8 @@ typedef struct
   uint32_t free_tail;
   uint8_t items[WLW_MAX_OBJECT_COUNT];
 } wlw_obj_map;
+_Static_assert (_wlw_i_size <= UINT8_MAX,
+                "wlw_obj_map[i] cannot hold wlw_interface");
 
 wlw_new_id
 wlw_bookkeep_obj_genid (wlw_obj_map *obj_map)
