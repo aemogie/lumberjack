@@ -165,6 +165,7 @@ wlw_recv (wlw_io_state *io, wlw_msg *msg)
   wlw_msg_size remainder;
 retry:
   remainder = io->read_end - io->next_frame;
+
   if (remainder < sizeof (wlw_header))
     goto refill_and_retry;
 
@@ -173,6 +174,24 @@ retry:
   assert (size < sizeof (io->buf));
   if (remainder < size)
     goto refill_and_retry;
+
+#if 0
+  int scale = 16;
+  putchar ('[');
+  for (int i = 0; i < WLW_IO_BUFFER_SIZE / scale; i++)
+    {
+      if (i < io->next_frame / scale)
+        putchar (' ');
+      else if (i < (io->next_frame + size) / scale)
+        putchar ('#');
+      else if (i < io->read_end / scale)
+        putchar ('.');
+      else
+        putchar (' ');
+    }
+  putchar (']');
+  putchar ('\n');
+#endif
 
   memcpy (msg, &io->buf[io->next_frame], size);
   io->next_frame += size;
@@ -414,15 +433,22 @@ main ()
           wlw_string *interface;
           wlw_uint *version;
           wl_registry_global (&wlw, &name, &interface, &version);
-          printf ("wl_registry:global(name=%d, interface=%s, version=%d)\n",
-                  *name, interface->str, *version);
+          printf ("global(%d) = %s@%d\n", *name, interface->str, *version);
           break;
         case wlw_callback_i:
           wlw_bookkeep_obj_unbind (&wlw.obj_map, wlw.msg.hdr.object);
           printf ("done listing\n");
           exit (0);
+          break;
         default:
-          assert (0 && "unimplemented");
+          printf ("[!!!] %s:", wlw_interface_names[wlw_bookkeep_obj_typeof (
+                                   &wlw.obj_map, wlw.msg.hdr.object)]);
+          for (wlw_msg_len i = 0;
+               i < wlw_size_to_len (wlw.msg.hdr.size_opcode >> 16); i++)
+            {
+              printf (" %08x", ((wlw_word *)&wlw.msg)[i]);
+            }
+          printf ("\n");
         };
     }
 }
