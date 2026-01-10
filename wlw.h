@@ -161,7 +161,6 @@ wlw_send (wlw_io_state *io, wlw_msg *msg)
 wlw_msg_size
 wlw_recv (wlw_io_state *io, wlw_msg *msg)
 {
-
   wlw_msg_size remainder;
 retry:
   remainder = io->read_end - io->next_frame;
@@ -348,10 +347,12 @@ enum _wl_display_r
   _wl_display_r_sync,
   _wl_display_r_get_registry,
 };
+
 enum _wl_display_e
 {
   _wl_display_e_global,
 };
+
 wlw_object
 wl_display_get_registry (wlw_state *wlw, wlw_object wl_display,
                          wlw_new_id registry)
