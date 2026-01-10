@@ -41,9 +41,9 @@ typedef struct
   wlw_header hdr;
   wlw_word
       payload[WLW_MSG_MAX_LEN - (sizeof (wlw_header) / sizeof (wlw_word))];
-} wlw_raw_msg;
+} wlw_msg;
 // because i dont trust myself to do math
-_Static_assert (sizeof (wlw_raw_msg) <= (WLW_MSG_MAX_LEN * sizeof (wlw_word)),
+_Static_assert (sizeof (wlw_msg) <= (WLW_MSG_MAX_LEN * sizeof (wlw_word)),
                 "raw message struct is too large");
 
 #define WLW_IO_BUFFER_SIZE (WLW_MSG_MAX_LEN * sizeof (wlw_word))
@@ -58,23 +58,16 @@ typedef struct
 } wlw_io_state;
 
 void wlw_open (wlw_io_state *io);
-void wlw_send (wlw_io_state *io, wlw_raw_msg *msg);
-uint16_t wlw_recv (wlw_io_state *io, wlw_raw_msg *msg);
+void wlw_send (wlw_io_state *io, wlw_msg *msg);
+uint16_t wlw_recv (wlw_io_state *io, wlw_msg *msg);
 
-#define _WLW_SIZED_WIRE_TYPES(X)                                              \
-  X (header)                                                                  \
-  X (object)                                                                  \
-  X (uint)                                                                    \
-  X (new_id)
-
-// returns len in number of wlw_words
-// not bytes because if a field is not aligned thats a bug
-#define X(type) uint16_t wlw_read_##type (wlw_word *head, wlw_##type **out);
-_WLW_SIZED_WIRE_TYPES (X)
-#undef X
-
+// returned pointer is always same as dereferencing what was passed in
+// the only utility of these functions is that they advance the head
+wlw_uint *wlw_read_uint (wlw_word **head);
+wlw_object *wlw_read_object (wlw_word **head);
+wlw_new_id *wlw_read_new_id (wlw_word **head);
 // dynamically sized, need to read from head to get size
-uint16_t wlw_read_string (wlw_word *head, wlw_string **out);
+wlw_string *wlw_read_string (wlw_word **head);
 
 #endif // _WLW_H
 
@@ -115,7 +108,7 @@ wlw_open (wlw_io_state *io)
 }
 
 void
-wlw_send (wlw_io_state *io, wlw_raw_msg *msg)
+wlw_send (wlw_io_state *io, wlw_msg *msg)
 {
   uint16_t size = msg->hdr.size_opcode >> 16;
   /*
@@ -137,7 +130,7 @@ wlw_send (wlw_io_state *io, wlw_raw_msg *msg)
 }
 
 uint16_t
-wlw_recv (wlw_io_state *io, wlw_raw_msg *msg)
+wlw_recv (wlw_io_state *io, wlw_msg *msg)
 {
 
   uint16_t remainder;
@@ -182,27 +175,45 @@ refill_and_retry:
   goto retry;
 }
 
-#define X(type)                                                               \
-  inline uint16_t wlw_read_##type (wlw_word *head, wlw_##type **out)          \
-  {                                                                           \
-    *out = (wlw_##type *)head;                                                \
-    return sizeof (wlw_##type) / sizeof (wlw_word);                           \
-  }
-
-_WLW_SIZED_WIRE_TYPES (X)
-#undef X
-
-inline uint16_t
-wlw_read_string (wlw_word *head, wlw_string **out)
+inline wlw_uint *
+wlw_read_uint (wlw_word **head)
 {
-  uint16_t len = 0;
-  *out = (wlw_string *)head;
-  wlw_word str_len = (*out)->len;
-  len++; // skip the length field
-  // align to wlw_word boundary
-  len += (str_len + sizeof (wlw_word) - 1) / sizeof (wlw_word);
-  return len;
+  return (wlw_uint *)(*head)++;
 }
+
+inline wlw_object *
+wlw_read_object (wlw_word **head)
+{
+  return (wlw_object *)(*head)++;
+}
+
+inline wlw_new_id *
+wlw_read_new_id (wlw_word **head)
+{
+  return (wlw_new_id *)(*head)++;
+}
+
+inline wlw_string *
+wlw_read_string (wlw_word **head)
+{
+  wlw_string *ret = (wlw_string *)(*head);
+
+  (*head)++; // skip the length field
+
+  // align to wlw_word boundary
+  // taxonomy note: "size" = in bytes, "len" = count in array type
+  uint16_t str_size = ret->len;
+  uint16_t word_size = sizeof (wlw_word);
+  // this will be used bias the division up, -1 ensures exact
+  // multiples dont cross the boundary twice
+  uint16_t round_up_bias = word_size - 1;
+  uint16_t biased_size = str_size + round_up_bias;
+  uint16_t str_len = biased_size / word_size;
+  *head += str_len;
+
+  return ret;
+}
+
 #endif // WLW_IMPLEMENTATION
 
 #ifdef WLW_EXAMPLE
@@ -286,12 +297,6 @@ wlw_bookkeep_obj_setup_reserved (wlw_obj_map *obj_map,
 
 typedef struct
 {
-  uint16_t parse_head; // index into raw.payload
-  wlw_raw_msg raw;
-} wlw_msg;
-
-typedef struct
-{
   wlw_msg msg;
   wlw_io_state io;
   wlw_obj_map obj_map;
@@ -319,7 +324,7 @@ wl_display_get_registry (wlw_state *wlw, wlw_object wl_display,
   msg.hdr.object = wl_display;
   msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_get_registry;
   msg.registry = registry;
-  wlw_send (&wlw->io, (wlw_raw_msg *)&msg);
+  wlw_send (&wlw->io, (wlw_msg *)&msg);
   return wlw_bookkeep_obj_bind (&wlw->obj_map, wlw_registry_i, registry);
 }
 
@@ -335,7 +340,7 @@ wl_display_sync (wlw_state *wlw, wlw_object wl_display, wlw_new_id callback)
   msg.hdr.object = wl_display;
   msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_sync;
   msg.callback = callback;
-  wlw_send (&wlw->io, (wlw_raw_msg *)&msg.hdr);
+  wlw_send (&wlw->io, (wlw_msg *)&msg.hdr);
   return wlw_bookkeep_obj_bind (&wlw->obj_map, wlw_callback_i, callback);
 }
 
@@ -348,21 +353,17 @@ void
 wl_registry_global (wlw_state *wlw, wlw_uint **out_name,
                     wlw_string **out_interface, wlw_uint **out_version)
 {
-  wlw->msg.parse_head = 0;
   // redundant assert
-  assert (wlw_bookkeep_obj_typeof (&wlw->obj_map, wlw->msg.raw.hdr.object)
+  assert (wlw_bookkeep_obj_typeof (&wlw->obj_map, wlw->msg.hdr.object)
           == wlw_registry_i);
-  uint16_t opcode = wlw->msg.raw.hdr.size_opcode & ((1 << 16) - 1);
+  uint16_t opcode = wlw->msg.hdr.size_opcode & ((1 << 16) - 1);
   assert (opcode == _wl_registry_e_global);
 
-#define wlw_parse(out_var, type)                                              \
-  wlw->msg.parse_head += wlw_read_##type (                                    \
-      &wlw->msg.raw.payload[wlw->msg.parse_head], out_var);
+  wlw_word *head = wlw->msg.payload;
 
-  wlw_parse (out_name, uint);
-  wlw_parse (out_interface, string);
-  wlw_parse (out_version, uint);
-#undef wlw_parse
+  *out_name = wlw_read_uint (&head);
+  *out_interface = wlw_read_string (&head);
+  *out_version = wlw_read_uint (&head);
 }
 
 int
@@ -380,11 +381,11 @@ main ()
 
   for (;;)
     {
-      wlw_recv (&wlw.io, &wlw.msg.raw);
-      switch (wlw_bookkeep_obj_typeof (&wlw.obj_map, wlw.msg.raw.hdr.object))
+      wlw_recv (&wlw.io, &wlw.msg);
+      switch (wlw_bookkeep_obj_typeof (&wlw.obj_map, wlw.msg.hdr.object))
         {
         case wlw_registry_i:
-          assert ((wlw.msg.raw.hdr.size_opcode & ((1 << 16) - 1))
+          assert ((wlw.msg.hdr.size_opcode & ((1 << 16) - 1))
                   == _wl_registry_e_global);
 
           wlw_uint *name;
@@ -395,7 +396,7 @@ main ()
                   *name, interface->str, *version);
           break;
         case wlw_callback_i:
-          wlw_bookkeep_obj_unbind (&wlw.obj_map, wlw.msg.raw.hdr.object);
+          wlw_bookkeep_obj_unbind (&wlw.obj_map, wlw.msg.hdr.object);
           printf ("done listing\n");
           exit (0);
         default:
