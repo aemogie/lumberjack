@@ -30,7 +30,7 @@ typedef uint16_t wlw_msg_len;
 "- 1" :: avoids doubly rounding up if "a" is already divisible by "b"
 "/ b" :: proceed with round-down division as normal, on the biased dividend
 */
-#define wlw_divide_up(a, b) ((a + b - 1) / b)
+#define wlw_divide_up(a, b) (((a) + (b) - 1) / (b))
 
 // takes a size in bytes and returns it as count of wlw_word, aligned up
 // wlw_msg_size -> wlw_msg_len
