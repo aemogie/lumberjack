@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <limits.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <sys/socket.h>
@@ -413,12 +414,12 @@ main ()
   wlw_object wlw_null_obj, wl_display;
   wlw_bookkeep_obj_setup_reserved (&wlw.obj_map, &wlw_null_obj, &wl_display);
 
-  printf ("listing all globals\n");
   wl_display_get_registry (&wlw, wl_display,
                            wlw_bookkeep_obj_genid (&wlw.obj_map));
   wl_display_sync (&wlw, wl_display, wlw_bookkeep_obj_genid (&wlw.obj_map));
 
-  for (;;)
+  bool running = true;
+  while (running)
     {
       wlw_msg_view *msg = wlw_recv (&wlw.io);
       switch (wlw_bookkeep_obj_typeof (&wlw.obj_map, msg->hdr.object))
@@ -435,8 +436,7 @@ main ()
           break;
         case wlw_callback_i:
           wlw_bookkeep_obj_unbind (&wlw.obj_map, msg->hdr.object);
-          printf ("done listing\n");
-          exit (0);
+          running = false;
           break;
         default:
           printf ("[!!!] %s:", wlw_interface_names[wlw_bookkeep_obj_typeof (
