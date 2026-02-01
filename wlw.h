@@ -39,8 +39,7 @@ typedef uint16_t wlw_msg_len;
 #define wlw_len_to_size(len)                                                  \
   ((wlw_msg_size)((wlw_msg_len)(len) * sizeof (wlw_word)))
 
-#define WLW_MSG_MAX_LEN ((wlw_msg_len)256)
-#define WLW_IO_BUFFER_SIZE ((wlw_msg_size)wlw_len_to_size (WLW_MSG_MAX_LEN))
+#define WLW_IO_BUFFER_SIZE (wlw_len_to_size (256))
 
 // wire types
 typedef wlw_word wlw_uint;
@@ -69,11 +68,8 @@ typedef struct
 typedef struct
 {
   wlw_header hdr;
-  wlw_word payload[WLW_MSG_MAX_LEN - wlw_size_to_len (sizeof (wlw_header))];
-} wlw_msg;
-// because i dont trust myself to do math
-_Static_assert (sizeof (wlw_msg) == wlw_len_to_size (WLW_MSG_MAX_LEN),
-                "raw message struct is too large");
+  wlw_word payload[];
+} wlw_msg_view;
 
 typedef struct
 {
@@ -86,8 +82,8 @@ typedef struct
 } wlw_io_state;
 
 void wlw_open (wlw_io_state *io);
-void wlw_send (wlw_io_state *io, wlw_msg *msg);
-wlw_msg_size wlw_recv (wlw_io_state *io, wlw_msg *msg);
+void wlw_send (wlw_io_state *io, wlw_msg_view *msg);
+wlw_msg_view *wlw_recv (wlw_io_state *io);
 
 // returned pointer is always same as dereferencing what was passed in
 // the only utility of these functions is that they advance the head
@@ -136,7 +132,7 @@ wlw_open (wlw_io_state *io)
 }
 
 void
-wlw_send (wlw_io_state *io, wlw_msg *msg)
+wlw_send (wlw_io_state *io, wlw_msg_view *msg)
 {
   wlw_msg_size size = msg->hdr.size_opcode >> 16;
 
@@ -150,29 +146,28 @@ wlw_send (wlw_io_state *io, wlw_msg *msg)
   printf ("\n");
 #endif
 
-  wlw_byte *end = &((wlw_byte *)msg)[size];
-  do
-    {
-      size -= write (io->fd, end - size, size);
-    }
-  while (__builtin_expect (size, 0));
+  write (io->fd, msg, size);
 }
 
-wlw_msg_size
-wlw_recv (wlw_io_state *io, wlw_msg *msg)
+wlw_msg_view *
+wlw_recv (wlw_io_state *io)
 {
+  wlw_msg_view *msg;
   wlw_msg_size remainder;
 retry:
+  msg = (wlw_msg_view *)&io->buf[io->next_frame];
   remainder = io->read_end - io->next_frame;
 
   if (remainder < sizeof (wlw_header))
     goto refill_and_retry;
 
-  wlw_msg_size size
-      = (((wlw_header *)(&io->buf[io->next_frame]))->size_opcode) >> 16;
+  wlw_msg_size size = msg->hdr.size_opcode >> 16;
+
   assert (size < sizeof (io->buf));
   if (remainder < size)
     goto refill_and_retry;
+
+  io->next_frame += size;
 
 #if 0
   int scale = 16;
@@ -192,9 +187,6 @@ retry:
   putchar ('\n');
 #endif
 
-  memcpy (msg, &io->buf[io->next_frame], size);
-  io->next_frame += size;
-
 #if 0
   wlw_msg_len len = wlw_size_to_len (size);
   printf ("S->C (%d)", size);
@@ -205,7 +197,7 @@ retry:
   printf ("\n");
 #endif
 
-  return size;
+  return msg;
 
   // this should only ever hit atmost once per call. this should not ever loop
 refill_and_retry:
@@ -337,7 +329,6 @@ wlw_bookkeep_obj_setup_reserved (wlw_obj_map *obj_map,
 
 typedef struct
 {
-  wlw_msg msg;
   wlw_io_state io;
   wlw_obj_map obj_map;
 } wlw_state;
@@ -366,7 +357,7 @@ wl_display_get_registry (wlw_state *wlw, wlw_object wl_display,
   msg.hdr.object = wl_display;
   msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_get_registry;
   msg.registry = registry;
-  wlw_send (&wlw->io, (wlw_msg *)&msg);
+  wlw_send (&wlw->io, (wlw_msg_view *)&msg);
   return wlw_bookkeep_obj_bind (&wlw->obj_map, wlw_registry_i, registry);
 }
 
@@ -382,7 +373,7 @@ wl_display_sync (wlw_state *wlw, wlw_object wl_display, wlw_new_id callback)
   msg.hdr.object = wl_display;
   msg.hdr.size_opcode = sizeof (msg) << 16 | _wl_display_r_sync;
   msg.callback = callback;
-  wlw_send (&wlw->io, (wlw_msg *)&msg.hdr);
+  wlw_send (&wlw->io, (wlw_msg_view *)&msg.hdr);
   return wlw_bookkeep_obj_bind (&wlw->obj_map, wlw_callback_i, callback);
 }
 
@@ -392,16 +383,16 @@ enum _wl_registry_e
 };
 
 void
-wl_registry_global (wlw_state *wlw, wlw_uint **out_name,
+wl_registry_global (wlw_state *wlw, wlw_msg_view *msg, wlw_uint **out_name,
                     wlw_string **out_interface, wlw_uint **out_version)
 {
   // redundant assert
-  assert (wlw_bookkeep_obj_typeof (&wlw->obj_map, wlw->msg.hdr.object)
+  assert (wlw_bookkeep_obj_typeof (&wlw->obj_map, msg->hdr.object)
           == wlw_registry_i);
-  uint16_t opcode = wlw->msg.hdr.size_opcode & ((1 << 16) - 1);
+  uint16_t opcode = msg->hdr.size_opcode & ((1 << 16) - 1);
   assert (opcode == _wl_registry_e_global);
 
-  wlw_word *head = wlw->msg.payload;
+  wlw_word *head = msg->payload;
 
   *out_name = wlw_read_uint (&head);
   *out_interface = wlw_read_string (&head);
@@ -423,31 +414,31 @@ main ()
 
   for (;;)
     {
-      wlw_recv (&wlw.io, &wlw.msg);
-      switch (wlw_bookkeep_obj_typeof (&wlw.obj_map, wlw.msg.hdr.object))
+      wlw_msg_view *msg = wlw_recv (&wlw.io);
+      switch (wlw_bookkeep_obj_typeof (&wlw.obj_map, msg->hdr.object))
         {
         case wlw_registry_i:
-          assert ((wlw.msg.hdr.size_opcode & ((1 << 16) - 1))
+          assert ((msg->hdr.size_opcode & ((1 << 16) - 1))
                   == _wl_registry_e_global);
 
           wlw_uint *name;
           wlw_string *interface;
           wlw_uint *version;
-          wl_registry_global (&wlw, &name, &interface, &version);
+          wl_registry_global (&wlw, msg, &name, &interface, &version);
           printf ("global(%d) = %s@%d\n", *name, interface->str, *version);
           break;
         case wlw_callback_i:
-          wlw_bookkeep_obj_unbind (&wlw.obj_map, wlw.msg.hdr.object);
+          wlw_bookkeep_obj_unbind (&wlw.obj_map, msg->hdr.object);
           printf ("done listing\n");
           exit (0);
           break;
         default:
           printf ("[!!!] %s:", wlw_interface_names[wlw_bookkeep_obj_typeof (
-                                   &wlw.obj_map, wlw.msg.hdr.object)]);
+                                   &wlw.obj_map, msg->hdr.object)]);
           for (wlw_msg_len i = 0;
-               i < wlw_size_to_len (wlw.msg.hdr.size_opcode >> 16); i++)
+               i < wlw_size_to_len (msg->hdr.size_opcode >> 16); i++)
             {
-              printf (" %08x", ((wlw_word *)&wlw.msg)[i]);
+              printf (" %08x", ((wlw_word *)msg)[i]);
             }
           printf ("\n");
         };
