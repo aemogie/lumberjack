@@ -104,19 +104,25 @@ wlw_open (wlw_io_state *io)
   int sockfd = socket (AF_UNIX, SOCK_STREAM, 0);
   assert (sockfd >= 0);
 
-  struct sockaddr_un addr = { 0 };
+  struct sockaddr_un addr;
   addr.sun_family = AF_UNIX;
 
   const char *rundir = getenv ("XDG_RUNTIME_DIR");
   if (!rundir)
     rundir = "/run/user/1000";
+  size_t rundir_size = strlen (rundir);
   const char *sockname = getenv ("WAYLAND_DISPLAY");
   if (!sockname)
     sockname = "wayland-0";
+  size_t sockname_size = strlen (sockname);
 
-  // cant do anything if it gets truncated, the api only allows
-  // sizeof(addr.sun_path) anyway
-  snprintf (addr.sun_path, sizeof (addr.sun_path), "%s/%s", rundir, sockname);
+  assert (rundir_size + sizeof (char) + sockname_size + sizeof (char)
+          <= sizeof (addr.sun_path));
+  memcpy (&addr.sun_path[0], rundir, rundir_size);
+  addr.sun_path[rundir_size] = '/';
+  memcpy (&addr.sun_path[rundir_size + sizeof (char)], sockname,
+          sockname_size);
+  addr.sun_path[rundir_size + sizeof (char) + sockname_size] = '\0';
 
   int ret = connect (sockfd, (const struct sockaddr *)&addr, sizeof (addr));
   assert (ret == 0);
