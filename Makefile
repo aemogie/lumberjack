@@ -1,19 +1,20 @@
+SRCS=wlw.h main.c
+CC=gcc
 CFLAGS=-Wall -Wextra -Werror
 
 default: wlw
 	./wlw
 
 wlw: wlw.h
-	cc ${CFLAGS} -x c wlw.h -DWLW_EXAMPLE -o wlw
-
-wlw.h: always
-	clang-format -i wlw.h
+	${CC} ${CFLAGS} -x c wlw.h -DWLW_EXAMPLE -o wlw
 
 main: main.c
-	cc ${CFLAGS} main.c -o main
+	${CC} ${CFLAGS} main.c -o main
 
-main.c:
-	clang-format -i main.c
+$(SRCS): %: always
+	@indent -gnu -nut -sar $(shell sed -n \
+	               -e 's/^typedef.* \([^ ]*\);$$/-T\1/p' \
+	               -e 's/^} \([^ ]*\);$$/-T\1/p' $@) $@
 
-always:
+always: ;
 

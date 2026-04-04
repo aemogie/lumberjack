@@ -1,3 +1,4 @@
+# -*- mode: org -*-
 #+title: lumberjack
 
 trying to write a text editor in c. possibly my first ever proper c software.
