@@ -510,7 +510,9 @@ wl_display_e_delete_id (const wlw_msg_view *msg)
   wlw_obj_unbind (obj);
 }
 
+
 // wl_callback
+
 enum _wl_callback_opcodes
 {
   _wl_callback_e_done = 0,
@@ -555,7 +557,9 @@ wlw_recv_until_sync (wlw_msg_view **msg, wl_callback *callback)
   return true;
 }
 
+
 // wl_registry
+
 enum _wl_registry_opcodes
 {
   _wl_registry_r_bind = 0,
@@ -610,7 +614,9 @@ wl_registry_r_bind (wl_registry self, wlw_uint name,
   return wlw_obj_bind (interface, id);
 }
 
+
 // wl_compositor
+
 enum _wl_compositor_opcodes
 {
   _wl_compositor_r_create_surface = 0,
@@ -668,7 +674,9 @@ xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
   return ret;
 }
 
+
 // xdg_surface
+
 enum _xdg_surface_r
 {
   _xdg_surface_r_destroy,
@@ -695,7 +703,7 @@ xdg_surface_r_get_toplevel (xdg_surface self, wlw_static_new_id id)
 }
 
 #endif // _WLW_H
-
+
 #ifdef WLW_EXAMPLE
 #undef WLW_EXAMPLE
 
