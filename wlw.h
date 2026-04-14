@@ -12,6 +12,11 @@
 #ifndef _WLW_H
 #define _WLW_H
 
+/*
+  Commentary: a blocking wayland client tha treats the compositor as
+  synchronous, trusted and known
+*/
+
 // declarations
 
 typedef uint32_t wlw_word;
@@ -49,6 +54,12 @@ typedef struct
 
 typedef struct
 {
+  wlw_word size;
+  const wlw_word untyped[];
+} wlw_array;
+
+typedef struct
+{
   wlw_object object;
   wlw_word size_opcode;
 } wlw_header;
@@ -64,7 +75,7 @@ void wlw_open ();
 void wlw_send (const wlw_msg_view *msg);
 const wlw_msg_view *wlw_recv ();
 // debug
-static inline void wlw_print_msg (const wlw_msg_view *msg);
+void wlw_print_msg (const wlw_msg_view *msg);
 
 static inline wlw_size wlw_msg_opcode (const wlw_msg_view *hdr);
 static inline uint16_t wlw_msg_size (const wlw_msg_view *hdr);
@@ -74,7 +85,6 @@ static inline void wlw_hdr_prepare (wlw_header *hdr,
 // returned pointer is always same as dereferencing what was passed in
 // the only utility of these functions is that they advance the head
 static inline wlw_uint wlw_read_uint (const wlw_word **head);
-static inline wlw_object wlw_read_object (const wlw_word **head);
 static inline wlw_static_new_id wlw_read_static_new_id (const wlw_word
                                                         **head);
 // dynamically sized, need to read from head to get size
@@ -82,7 +92,6 @@ static inline const wlw_string *wlw_read_string (const wlw_word **head);
 
 // same as reader pattern
 static inline void wlw_write_uint (wlw_word **head, wlw_uint val);
-static inline void wlw_write_object (wlw_word **head, wlw_object obj);
 static inline void wlw_write_static_new_id (wlw_word **head,
                                             wlw_static_new_id id);
 static inline void wlw_write_string (wlw_word **head, wlw_word len,
@@ -180,6 +189,9 @@ wl_registry_e_global_args wl_registry_e_global (const wlw_msg_view *msg);
 wl_surface wl_compositor_r_create_surface (wl_compositor self,
                                            wlw_static_new_id id);
 
+// wl_surface
+void wl_surface_r_commit (wl_surface self);
+
 // xdg_wm_base
 xdg_surface xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
                                            wlw_static_new_id id,
@@ -188,7 +200,32 @@ xdg_surface xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
 // xdg_surface
 xdg_toplevel xdg_surface_r_get_toplevel (xdg_surface self,
                                          wlw_static_new_id id);
+typedef struct
+{
+  wlw_uint serial;
+} xdg_surface_configure_serial;
+xdg_surface_configure_serial xdg_surface_e_configure (const wlw_msg_view
+                                                      *msg);
+void xdg_surface_r_ack_configure (xdg_surface self,
+                                  xdg_surface_configure_serial serial);
+
+// xdg_toplevel
+
+// trailing dynamic member, we can just cast pointers from the reader
+typedef struct
+{
+  wlw_uint width;
+  wlw_uint height;
+  // note: use an inline enum here the day is start caring for this field
+  wlw_array states;
+} xdg_toplevel_e_configure_args;
+const xdg_toplevel_e_configure_args *xdg_toplevel_e_configure (const
+                                                               wlw_msg_view
+                                                               *msg);
+// note: dont care for the response, skip for now
+void xdg_toplevel_e_wm_capabilities (const wlw_msg_view *msg);
 
+
 // global helpers
 
 static inline wlw_len
@@ -296,16 +333,16 @@ wlw_recv ()
 }
 
 // debug
-static inline void
+void
 wlw_print_msg (const wlw_msg_view *msg)
 {
-  wlw_size size = wlw_msg_size (msg);
+  wlw_size size = wlw_msg_size (msg) - sizeof (wlw_header);
   printf ("%s(%d): !%d [%d] ",
           wlw_interface_names[wlw_obj_typeof (msg->hdr.object)].str,
           msg->hdr.object.id, wlw_msg_opcode (msg), size);
   for (wlw_len i = 0; i < wlw_size_to_len (size); i++)
     {
-      printf ("%08x ", ((wlw_word *) &msg->payload)[i]);
+      printf ("#x%08x ", ((wlw_word *) &msg->payload)[i]);
     }
   printf ("\n");
 }
@@ -341,14 +378,6 @@ wlw_read_uint (const wlw_word **head)
   return ret;
 }
 
-static inline wlw_object
-wlw_read_object (const wlw_word **head)
-{
-  wlw_object ret = {.id = **head };
-  (*head)++;
-  return ret;
-}
-
 static inline wlw_static_new_id
 wlw_read_static_new_id (const wlw_word **head)
 {
@@ -372,13 +401,6 @@ static inline void
 wlw_write_uint (wlw_word **head, wlw_uint val)
 {
   **head = val;
-  (*head)++;
-}
-
-static inline void
-wlw_write_object (wlw_word **head, wlw_object obj)
-{
-  **head = obj.id;
   (*head)++;
 }
 
@@ -642,6 +664,34 @@ wl_compositor_r_create_surface (wl_compositor self, wlw_static_new_id id)
   return ret;
 }
 
+
+// wl_surface
+
+enum _wl_surface_opcodes
+{
+  _wl_surface_r_destroy = 0,
+  _wl_surface_r_attach,
+  _wl_surface_r_damage,         // looks deprecated
+  _wl_surface_r_frame,
+  _wl_surface_r_set_opaque_region,
+  _wl_surface_r_set_input_region,
+  _wl_surface_r_commit,
+};
+
+void
+wl_surface_r_commit (wl_surface self)
+{
+  assert (wlw_obj_typeof (self.as_obj) == wl_surface_i);
+
+  struct
+  {
+    wlw_header hdr;
+  } msg;
+
+  wlw_hdr_prepare (&msg.hdr, self.as_obj, _wl_surface_r_commit, sizeof (msg));
+  wlw_send ((wlw_msg_view *) &msg);
+}
+
 enum _xdg_wm_base_opcodes
 {
   _xdg_wm_base_r_destroy = 0,
@@ -679,8 +729,12 @@ xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
 
 enum _xdg_surface_r
 {
-  _xdg_surface_r_destroy,
+  _xdg_surface_r_destroy = 0,
   _xdg_surface_r_get_toplevel,
+  _xdg_surface_r_get_popup,
+  _xdg_surface_r_set_window_geometry,
+  _xdg_surface_r_ack_configure,
+  _xdg_surface_e_configure = 0,
 };
 
 xdg_toplevel
@@ -700,6 +754,62 @@ xdg_surface_r_get_toplevel (xdg_surface self, wlw_static_new_id id)
 
   xdg_toplevel ret = { wlw_obj_bind (xdg_toplevel_i, id) };
   return ret;
+}
+
+xdg_surface_configure_serial
+xdg_surface_e_configure (const wlw_msg_view *msg)
+{
+  assert (wlw_obj_typeof (msg->hdr.object) == xdg_surface_i);
+  assert (wlw_msg_opcode (msg) == _xdg_surface_e_configure);
+
+  xdg_surface_configure_serial ret = {
+    .serial = msg->payload[0],
+  };
+  return ret;
+}
+
+void
+xdg_surface_r_ack_configure (xdg_surface self,
+                             xdg_surface_configure_serial serial)
+{
+  assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i);
+
+  struct
+  {
+    wlw_header hdr;
+    xdg_surface_configure_serial serial;
+  } msg;
+  msg.serial = serial;
+
+  wlw_hdr_prepare (&msg.hdr, self.as_obj, _xdg_surface_r_ack_configure,
+                   sizeof (msg));
+  wlw_send ((wlw_msg_view *) &msg);
+}
+
+// xdg_toplevel
+enum _xdg_toplevel_opcodes
+{
+  _xdg_toplevel_e_configure = 0,
+  _xdg_toplevel_e_close,
+  _xdg_toplevel_e_configure_bounds,
+  _xdg_toplevel_e_wm_capabilities,
+};
+
+const xdg_toplevel_e_configure_args *
+xdg_toplevel_e_configure (const wlw_msg_view *msg)
+{
+  assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i);
+  assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_configure);
+
+  // trailing dynamic member, castable to flexible member
+  return (xdg_toplevel_e_configure_args *) msg->payload;
+}
+
+void
+xdg_toplevel_e_wm_capabilities (const wlw_msg_view *msg)
+{
+  assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i);
+  assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_wm_capabilities);
 }
 
 #endif // _WLW_H
@@ -747,6 +857,14 @@ main ()
   xdg_toplevel toplevel =
     xdg_surface_r_get_toplevel (shell_surface, wlw_obj_genid ());
   (void) toplevel;
+  wl_surface_r_commit (surface);
+  xdg_toplevel_e_wm_capabilities (wlw_recv ());
+  const xdg_toplevel_e_configure_args *args =
+    xdg_toplevel_e_configure (wlw_recv ());
+
+  xdg_surface_r_ack_configure (shell_surface,
+                               xdg_surface_e_configure (wlw_recv ()));
+  printf ("window w=%d * h=%d\n", args->width, args->height);
 
   printf ("todo list:\n");
   while (wlw_recv_until_sync (&msg, &syncpoint))
