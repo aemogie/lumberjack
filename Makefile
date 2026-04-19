@@ -1,6 +1,6 @@
 SRCS=wlw.h main.c
 CC=gcc
-CFLAGS=-Wall -Wextra -Werror -ggdb
+CFLAGS=-Wall -Wextra -Werror -static -Ofast
 
 default: wlw
 	./wlw

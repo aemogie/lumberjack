@@ -1,16 +1,12 @@
-#include <limits.h>
 #include <string.h>
 #include <stdint.h>
-#include <stdalign.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
 
-#ifndef NDEBUG
 #include <errno.h>
 #include <stdio.h>
-#endif
 
 
 #ifndef _WLW_H
@@ -21,7 +17,6 @@
   synchronous, trusted and known
 */
 
-#ifndef NDEBUG
 #define wlw_assert(cond, fmt, ...)                      \
   do                                                    \
     {                                                   \
@@ -33,9 +28,6 @@
         }                                               \
     }                                                   \
   while (0)
-#else
-#define wlw_assert(cond, ...) __builtin_assume(cond)
-#endif
 
 // declarations
 
@@ -94,11 +86,7 @@ typedef struct
 void wlw_open ();
 void wlw_send (const wlw_msg_view *msg);
 const wlw_msg_view *wlw_recv ();
-#ifndef NDEBUG
 void wlw_print_msg (const wlw_msg_view *msg);
-#else
-#define wlw_print_msg(msg)
-#endif
 
 static inline wlw_size wlw_msg_opcode (const wlw_msg_view *hdr);
 static inline uint16_t wlw_msg_size (const wlw_msg_view *hdr);
@@ -274,7 +262,7 @@ wlw_send (const wlw_msg_view *msg)
 }
 
 static inline int
-_wlw_recv_refill ()
+wlw__recv_refill ()
 {
   wlw_size remainder = wlw_reader_end - wlw_reader_next;
 
@@ -299,7 +287,7 @@ wlw_recv ()
 
   if (remainder < sizeof (wlw_header))
     {
-      remainder += _wlw_recv_refill ();
+      remainder += wlw__recv_refill ();
       msg = (wlw_msg_view *) &wlw_reader_buf[wlw_reader_next];
     }
 
@@ -308,7 +296,7 @@ wlw_recv ()
 
   if (remainder < size)
     {
-      remainder += _wlw_recv_refill ();
+      remainder += wlw__recv_refill ();
       msg = (wlw_msg_view *) &wlw_reader_buf[wlw_reader_next];
     }
 
@@ -316,7 +304,6 @@ wlw_recv ()
   return msg;
 }
 
-#ifndef NDEBUG
 void
 wlw_print_msg (const wlw_msg_view *msg)
 {
@@ -330,7 +317,6 @@ wlw_print_msg (const wlw_msg_view *msg)
     }
   printf ("\n");
 }
-#endif
 
 
 // wire types
