@@ -1,13 +1,17 @@
-#include <stdio.h>
-#include <assert.h>
 #include <limits.h>
 #include <string.h>
-#include <stdbool.h>
 #include <stdint.h>
+#include <stdalign.h>
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#ifndef NDEBUG
+#include <errno.h>
+#include <stdio.h>
+#endif
+
 
 #ifndef _WLW_H
 #define _WLW_H
@@ -16,6 +20,22 @@
   Commentary: a blocking wayland client tha treats the compositor as
   synchronous, trusted and known
 */
+
+#ifndef NDEBUG
+#define wlw_assert(cond, fmt, ...)                      \
+  do                                                    \
+    {                                                   \
+      if (!(cond))                                      \
+        {                                               \
+          fprintf (stderr, "%s:%d: error: " fmt "\n",   \
+                   __FILE__, __LINE__, ##__VA_ARGS__);  \
+          exit (1);                                     \
+        }                                               \
+    }                                                   \
+  while (0)
+#else
+#define wlw_assert(cond, ...) __builtin_assume(cond)
+#endif
 
 // declarations
 
@@ -74,35 +94,21 @@ typedef struct
 void wlw_open ();
 void wlw_send (const wlw_msg_view *msg);
 const wlw_msg_view *wlw_recv ();
-// debug
+#ifndef NDEBUG
 void wlw_print_msg (const wlw_msg_view *msg);
+#else
+#define wlw_print_msg(msg)
+#endif
 
 static inline wlw_size wlw_msg_opcode (const wlw_msg_view *hdr);
 static inline uint16_t wlw_msg_size (const wlw_msg_view *hdr);
-static inline void wlw_hdr_prepare (wlw_header *hdr,
-                                    wlw_object obj,
-                                    uint16_t opcode, wlw_size size);
-// returned pointer is always same as dereferencing what was passed in
-// the only utility of these functions is that they advance the head
-static inline wlw_uint wlw_read_uint (const wlw_word **head);
-static inline wlw_static_new_id wlw_read_static_new_id (const wlw_word
-                                                        **head);
+static inline wlw_word wlw_size_opcode (wlw_size size, uint16_t opcode);
 // dynamically sized, need to read from head to get size
 static inline const wlw_string *wlw_read_string (const wlw_word **head);
 
 // same as reader pattern
-static inline void wlw_write_uint (wlw_word **head, wlw_uint val);
-static inline void wlw_write_static_new_id (wlw_word **head,
-                                            wlw_static_new_id id);
 static inline void wlw_write_string (wlw_word **head, wlw_word len,
                                      const char *str);
-// composite writer, used often enough
-static inline void wlw_write_dynamic_new_id (wlw_word **head,
-                                             wlw_word interface_len,
-                                             const char *interface_str,
-                                             wlw_uint version,
-                                             wlw_static_new_id id);
-
 
 // interfaces
 typedef enum
@@ -171,7 +177,7 @@ typedef struct
   wlw_uint callback_data;
 } wl_callback_args;
 wl_callback_args wl_callback_e_done (const wlw_msg_view *msg);
-bool wlw_recv_until_sync (wlw_msg_view **msg, wl_callback *callback);
+const wlw_msg_view *wlw_recv_until_sync (wl_callback *callback);
 
 // wl_registry
 wlw_object wl_registry_r_bind (wl_registry self, wlw_uint name,
@@ -245,33 +251,18 @@ alignas (wlw_word)
 void
 wlw_open ()
 {
-  assert (wlw_sockfd == -1);
+  wlw_assert (wlw_sockfd == -1, "sockfd already initialised");
   wlw_sockfd = socket (AF_UNIX, SOCK_STREAM, 0);
-  assert (wlw_sockfd >= 0);
+  wlw_assert (wlw_sockfd >= 0, "couldnt open socket: %s", strerror (errno));
 
-  struct sockaddr_un addr;
-  addr.sun_family = AF_UNIX;
-
-  const char *rundir = getenv ("XDG_RUNTIME_DIR");
-  if (!rundir)
-    rundir = "/run/user/1000";
-  size_t rundir_size = strlen (rundir);
-  const char *sockname = getenv ("WAYLAND_DISPLAY");
-  if (!sockname)
-    sockname = "wayland-0";
-  size_t sockname_size = strlen (sockname);
-
-  assert (rundir_size + sizeof (char) + sockname_size + sizeof (char)
-          <= sizeof (addr.sun_path));
-  memcpy (&addr.sun_path[0], rundir, rundir_size);
-  addr.sun_path[rundir_size] = '/';
-  memcpy (&addr.sun_path[rundir_size + sizeof (char)], sockname,
-          sockname_size);
-  addr.sun_path[rundir_size + sizeof (char) + sockname_size] = '\0';
+  struct sockaddr_un addr = {
+    .sun_family = AF_UNIX,
+    .sun_path = "/run/user/1000/wayland-1",
+  };
 
   int ret =
     connect (wlw_sockfd, (const struct sockaddr *) &addr, sizeof (addr));
-  assert (ret == 0);
+  wlw_assert (ret == 0, "connection failed: %s", strerror (errno));
 }
 
 void
@@ -279,7 +270,7 @@ wlw_send (const wlw_msg_view *msg)
 {
   wlw_size size = wlw_msg_size (msg);
   int n = write (wlw_sockfd, msg, size);
-  assert (n == size);
+  wlw_assert (n == size, "partial message written");
 }
 
 static inline int
@@ -287,52 +278,45 @@ _wlw_recv_refill ()
 {
   wlw_size remainder = wlw_reader_end - wlw_reader_next;
 
-  assert (remainder <= wlw_reader_next);
+  wlw_assert (remainder <= wlw_reader_next, "not enough space to compact");
   memcpy (&wlw_reader_buf[0], &wlw_reader_buf[wlw_reader_next], remainder);
   wlw_reader_end = remainder;
   wlw_reader_next = 0;
 
   int n = read (wlw_sockfd, &wlw_reader_buf[wlw_reader_end],
                 sizeof (wlw_reader_buf) - wlw_reader_end);
-  assert (n > 0);
+  wlw_assert (n > 0, "read failed %s", strerror (errno));
   wlw_reader_end += n;
 
   return n;
-}
-
-// warn: does not guarantee a full message has been read
-static inline const wlw_msg_view *
-_wlw_recv_peek ()
-{
-  return ((wlw_msg_view *) &wlw_reader_buf[wlw_reader_next]);
-}
-
-static inline const wlw_msg_view *
-_wlw_recv_advance ()
-{
-  const wlw_msg_view *msg = _wlw_recv_peek ();
-  assert (wlw_reader_next + wlw_msg_size (msg) <= wlw_reader_end);
-  wlw_reader_next += wlw_msg_size (msg);
-  return msg;
 }
 
 const wlw_msg_view *
 wlw_recv ()
 {
   wlw_size remainder = wlw_reader_end - wlw_reader_next;
+  wlw_msg_view *msg = (wlw_msg_view *) &wlw_reader_buf[wlw_reader_next];
 
   if (remainder < sizeof (wlw_header))
-    remainder += _wlw_recv_refill ();
+    {
+      remainder += _wlw_recv_refill ();
+      msg = (wlw_msg_view *) &wlw_reader_buf[wlw_reader_next];
+    }
 
-  wlw_size size = wlw_msg_size (_wlw_recv_peek ());
-  assert (size < sizeof (wlw_reader_buf));
+  wlw_size size = wlw_msg_size (msg);
+  wlw_assert (size < sizeof (wlw_reader_buf), "message too large");
+
   if (remainder < size)
-    remainder += _wlw_recv_refill ();
+    {
+      remainder += _wlw_recv_refill ();
+      msg = (wlw_msg_view *) &wlw_reader_buf[wlw_reader_next];
+    }
 
-  return _wlw_recv_advance ();
+  wlw_reader_next += wlw_msg_size (msg);
+  return msg;
 }
 
-// debug
+#ifndef NDEBUG
 void
 wlw_print_msg (const wlw_msg_view *msg)
 {
@@ -346,6 +330,7 @@ wlw_print_msg (const wlw_msg_view *msg)
     }
   printf ("\n");
 }
+#endif
 
 
 // wire types
@@ -362,28 +347,10 @@ wlw_msg_size (const wlw_msg_view *msg)
   return (msg->hdr.size_opcode >> 16) & UINT16_MAX;
 }
 
-static inline void
-wlw_hdr_prepare (wlw_header *hdr,
-                 wlw_object obj, uint16_t opcode, wlw_size size)
+static inline wlw_word
+wlw_size_opcode (wlw_size size, uint16_t opcode)
 {
-  hdr->object = obj;
-  hdr->size_opcode = (size << 16) | opcode;
-}
-
-static inline wlw_uint
-wlw_read_uint (const wlw_word **head)
-{
-  wlw_uint ret = **head;
-  (*head)++;
-  return ret;
-}
-
-static inline wlw_static_new_id
-wlw_read_static_new_id (const wlw_word **head)
-{
-  wlw_static_new_id ret = {.repr = **head };
-  (*head)++;
-  return ret;
+  return (size << 16) | opcode;
 }
 
 static inline const wlw_string *
@@ -398,20 +365,6 @@ wlw_read_string (const wlw_word **head)
 }
 
 static inline void
-wlw_write_uint (wlw_word **head, wlw_uint val)
-{
-  **head = val;
-  (*head)++;
-}
-
-static inline void
-wlw_write_static_new_id (wlw_word **head, wlw_static_new_id id)
-{
-  **head = id.repr;
-  (*head)++;
-}
-
-static inline void
 wlw_write_string (wlw_word **head, wlw_word len, const char *str)
 {
   **head = len;
@@ -421,18 +374,8 @@ wlw_write_string (wlw_word **head, wlw_word len, const char *str)
   // align to wlw_word boundary
   *head += wlw_size_to_len (len);
 }
-
-static inline void
-wlw_write_dynamic_new_id (wlw_word **head,
-                          wlw_word interface_len,
-                          const char *interface_str,
-                          wlw_uint version, wlw_static_new_id id)
-{
-  wlw_write_string (head, interface_len, interface_str);
-  wlw_write_uint (head, version);
-  wlw_write_static_new_id (head, id);
-}
 
+
 // bookkeeping
 
 // just linear allocator for now, we can do free lists if we need it
@@ -448,7 +391,8 @@ wlw_static_new_id
 wlw_obj_genid ()
 {
   wlw_static_new_id new_id = { wlw_obj_free_tail++ };
-  assert (new_id.repr < (sizeof (wlw_obj_map) / sizeof (wlw_obj_map[0])));
+  wlw_assert (new_id.repr < (sizeof (wlw_obj_map) / sizeof (wlw_obj_map[0])),
+              "ran out of ids");
   return new_id;
 }
 
@@ -495,8 +439,9 @@ wl_display_r_get_registry (wlw_static_new_id registry)
   } msg;
   msg.registry = registry;
 
-  wlw_hdr_prepare (&msg.hdr, self.as_obj, _wl_display_r_get_registry,
-                   sizeof (msg));
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode =
+    wlw_size_opcode (sizeof (msg), _wl_display_r_get_registry);
   wlw_send ((wlw_msg_view *) &msg);
 
   wl_registry ret = { wlw_obj_bind (wl_registry_i, registry) };
@@ -515,7 +460,8 @@ wl_display_r_sync (wlw_static_new_id callback)
   } msg;
   msg.callback = callback;
 
-  wlw_hdr_prepare (&msg.hdr, self.as_obj, _wl_display_r_sync, sizeof (msg));
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode = wlw_size_opcode (sizeof (msg), _wl_display_r_sync);
   wlw_send ((wlw_msg_view *) &msg);
 
   wl_callback ret = { wlw_obj_bind (wl_callback_i, callback) };
@@ -525,8 +471,8 @@ wl_display_r_sync (wlw_static_new_id callback)
 void
 wl_display_e_delete_id (const wlw_msg_view *msg)
 {
-  assert (msg->hdr.object.id == 1);
-  assert (wlw_obj_typeof (msg->hdr.object) == wl_display_i);
+  wlw_assert (msg->hdr.object.id == 1, "bad object");
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_display_i, "bad opcode");
 
   wlw_object obj = { msg->payload[0] };
   wlw_obj_unbind (obj);
@@ -543,8 +489,9 @@ enum _wl_callback_opcodes
 wl_callback_args
 wl_callback_e_done (const wlw_msg_view *msg)
 {
-  assert (wlw_obj_typeof (msg->hdr.object) == wl_callback_i);
-  assert (wlw_msg_opcode (msg) == _wl_callback_e_done);
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_callback_i,
+              "bad object");
+  wlw_assert (wlw_msg_opcode (msg) == _wl_callback_e_done, "bad opcode");
 
   wl_callback_args args = {
     .callback_data = msg->payload[0],
@@ -552,31 +499,33 @@ wl_callback_e_done (const wlw_msg_view *msg)
   return args;
 }
 
-bool
-wlw_recv_until_sync (wlw_msg_view **msg, wl_callback *callback)
+const wlw_msg_view *
+wlw_recv_until_sync (wl_callback *callback)
 {
   static bool is_callback_pending = false;
   if (callback->as_obj.id == wlw_object_invalid.id)
     {
-      assert (!is_callback_pending);
+      wlw_assert (!is_callback_pending,
+                  "attempted to sync while another callback is pending");
       is_callback_pending = true;
       *callback = wl_display_r_sync (wlw_obj_genid ());
     }
-  assert (wlw_obj_typeof (callback->as_obj) == wl_callback_i);
+  wlw_assert (wlw_obj_typeof (callback->as_obj) == wl_callback_i,
+              "not a sync point");
 
-  *msg = (wlw_msg_view *) wlw_recv ();
+  const wlw_msg_view *msg = wlw_recv ();
 
-  if ((*msg)->hdr.object.id == callback->as_obj.id)
+  if (msg->hdr.object.id == callback->as_obj.id)
     {
-      (void) wl_callback_e_done (*msg);
-      assert (is_callback_pending);
+      (void) wl_callback_e_done (msg);
+      wlw_assert (is_callback_pending, "unexpected callback completion");
       is_callback_pending = false;
 
       wl_display_e_delete_id (wlw_recv ());
       callback->as_obj = wlw_object_invalid;
-      return false;
+      return NULL;
     }
-  return true;
+  return msg;
 }
 
 
@@ -591,15 +540,16 @@ enum _wl_registry_opcodes
 wl_registry_e_global_args
 wl_registry_e_global (const wlw_msg_view *msg)
 {
-  assert (wlw_obj_typeof (msg->hdr.object) == wl_registry_i);
-  assert (wlw_msg_opcode (msg) == _wl_registry_e_global);
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_registry_i,
+              "bad object");
+  wlw_assert (wlw_msg_opcode (msg) == _wl_registry_e_global, "bad opcode");
 
   const wlw_word *head = msg->payload;
 
   wl_registry_e_global_args args;
-  args.name = wlw_read_uint (&head);
+  args.name = *(head++);
   args.interface = wlw_read_string (&head);
-  args.version = wlw_read_uint (&head);
+  args.version = *(head++);
   return args;
 }
 
@@ -608,7 +558,7 @@ wl_registry_r_bind (wl_registry self, wlw_uint name,
                     wlw_interface interface, wlw_uint version,
                     wlw_static_new_id id)
 {
-  assert (wlw_obj_typeof (self.as_obj) == wl_registry_i);
+  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_registry_i, "bad object");
 
   // only for computing size
   typedef struct
@@ -625,13 +575,16 @@ wl_registry_r_bind (wl_registry self, wlw_uint name,
   wlw_msg_view *msg = (wlw_msg_view *) &message;
 
   wlw_word *head = msg->payload;
-  wlw_write_uint (&head, name);
-  wlw_write_dynamic_new_id (&head,
-                            wlw_interface_names[interface].len,
-                            wlw_interface_names[interface].str, version, id);
+  *(head++) = name;
+  // dynamic new id
+  wlw_write_string (&head, wlw_interface_names[interface].len,
+                    wlw_interface_names[interface].str);
+  *(head++) = version;
+  *(head++) = id.repr;
 
   wlw_size size = ((wlw_byte *) head - (wlw_byte *) msg);
-  wlw_hdr_prepare (&msg->hdr, self.as_obj, _wl_registry_r_bind, size);
+  msg->hdr.object = self.as_obj;
+  msg->hdr.size_opcode = wlw_size_opcode (size, _wl_registry_r_bind);
   wlw_send (msg);
   return wlw_obj_bind (interface, id);
 }
@@ -647,7 +600,7 @@ enum _wl_compositor_opcodes
 wl_surface
 wl_compositor_r_create_surface (wl_compositor self, wlw_static_new_id id)
 {
-  assert (wlw_obj_typeof (self.as_obj) == wl_compositor_i);
+  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_compositor_i, "bad object");
 
   struct
   {
@@ -656,8 +609,9 @@ wl_compositor_r_create_surface (wl_compositor self, wlw_static_new_id id)
   } msg;
   msg.id = id;
 
-  wlw_hdr_prepare (&msg.hdr, self.as_obj, _wl_compositor_r_create_surface,
-                   sizeof (msg));
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode =
+    wlw_size_opcode (sizeof (msg), _wl_compositor_r_create_surface);
   wlw_send ((wlw_msg_view *) &msg);
 
   wl_surface ret = { wlw_obj_bind (wl_surface_i, id) };
@@ -681,14 +635,15 @@ enum _wl_surface_opcodes
 void
 wl_surface_r_commit (wl_surface self)
 {
-  assert (wlw_obj_typeof (self.as_obj) == wl_surface_i);
+  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_surface_i, "bad object");
 
   struct
   {
     wlw_header hdr;
   } msg;
 
-  wlw_hdr_prepare (&msg.hdr, self.as_obj, _wl_surface_r_commit, sizeof (msg));
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode = wlw_size_opcode (sizeof (msg), _wl_surface_r_commit);
   wlw_send ((wlw_msg_view *) &msg);
 }
 
@@ -705,8 +660,9 @@ xdg_surface
 xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
                                wlw_static_new_id id, wl_surface surface)
 {
-  assert (wlw_obj_typeof (self.as_obj) == xdg_wm_base_i);
-  assert (wlw_obj_typeof (surface.as_obj) == wl_surface_i);
+  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_wm_base_i, "bad object");
+  wlw_assert (wlw_obj_typeof (surface.as_obj) == wl_surface_i,
+              "bad argument");
   struct
   {
     wlw_header hdr;
@@ -716,8 +672,9 @@ xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
   msg.id = id;
   msg.surface = surface;
 
-  wlw_hdr_prepare (&msg.hdr, self.as_obj, _xdg_wm_base_r_get_xdg_surface,
-                   sizeof (msg));
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode =
+    wlw_size_opcode (sizeof (msg), _xdg_wm_base_r_get_xdg_surface);
   wlw_send ((wlw_msg_view *) &msg);
 
   xdg_surface ret = { wlw_obj_bind (xdg_surface_i, id) };
@@ -740,7 +697,7 @@ enum _xdg_surface_r
 xdg_toplevel
 xdg_surface_r_get_toplevel (xdg_surface self, wlw_static_new_id id)
 {
-  assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i);
+  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i, "bad object");
   struct
   {
     wlw_header hdr;
@@ -748,8 +705,9 @@ xdg_surface_r_get_toplevel (xdg_surface self, wlw_static_new_id id)
   } msg;
   msg.id = id;
 
-  wlw_hdr_prepare (&msg.hdr, self.as_obj, _xdg_surface_r_get_toplevel,
-                   sizeof (msg));
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode =
+    wlw_size_opcode (sizeof (msg), _xdg_surface_r_get_toplevel);
   wlw_send ((wlw_msg_view *) &msg);
 
   xdg_toplevel ret = { wlw_obj_bind (xdg_toplevel_i, id) };
@@ -759,8 +717,9 @@ xdg_surface_r_get_toplevel (xdg_surface self, wlw_static_new_id id)
 xdg_surface_configure_serial
 xdg_surface_e_configure (const wlw_msg_view *msg)
 {
-  assert (wlw_obj_typeof (msg->hdr.object) == xdg_surface_i);
-  assert (wlw_msg_opcode (msg) == _xdg_surface_e_configure);
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_surface_i,
+              "bad object");
+  wlw_assert (wlw_msg_opcode (msg) == _xdg_surface_e_configure, "bad opcode");
 
   xdg_surface_configure_serial ret = {
     .serial = msg->payload[0],
@@ -772,7 +731,7 @@ void
 xdg_surface_r_ack_configure (xdg_surface self,
                              xdg_surface_configure_serial serial)
 {
-  assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i);
+  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i, "bad object");
 
   struct
   {
@@ -781,8 +740,9 @@ xdg_surface_r_ack_configure (xdg_surface self,
   } msg;
   msg.serial = serial;
 
-  wlw_hdr_prepare (&msg.hdr, self.as_obj, _xdg_surface_r_ack_configure,
-                   sizeof (msg));
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode =
+    wlw_size_opcode (sizeof (msg), _xdg_surface_r_ack_configure);
   wlw_send ((wlw_msg_view *) &msg);
 }
 
@@ -798,8 +758,10 @@ enum _xdg_toplevel_opcodes
 const xdg_toplevel_e_configure_args *
 xdg_toplevel_e_configure (const wlw_msg_view *msg)
 {
-  assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i);
-  assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_configure);
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i,
+              "bad object");
+  wlw_assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_configure,
+              "bad opcode");
 
   // trailing dynamic member, castable to flexible member
   return (xdg_toplevel_e_configure_args *) msg->payload;
@@ -808,8 +770,10 @@ xdg_toplevel_e_configure (const wlw_msg_view *msg)
 void
 xdg_toplevel_e_wm_capabilities (const wlw_msg_view *msg)
 {
-  assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i);
-  assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_wm_capabilities);
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i,
+              "bad object");
+  wlw_assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_wm_capabilities,
+              "bad opcode");
 }
 
 #endif // _WLW_H
@@ -828,10 +792,10 @@ main ()
 
   wl_compositor compositor = { wlw_object_invalid };
   xdg_wm_base wm_base = { wlw_object_invalid };
-  wlw_msg_view *msg;
+  const wlw_msg_view *msg;
   wl_callback syncpoint = { wlw_object_invalid };
 
-  while (wlw_recv_until_sync (&msg, &syncpoint))
+  while ((msg = wlw_recv_until_sync (&syncpoint)))
     {
       wl_registry_e_global_args args = wl_registry_e_global (msg);
       const char *iname = args.interface->str;
@@ -867,7 +831,7 @@ main ()
   printf ("window w=%d * h=%d\n", args->width, args->height);
 
   printf ("todo list:\n");
-  while (wlw_recv_until_sync (&msg, &syncpoint))
+  while ((msg = wlw_recv_until_sync (&syncpoint)))
     wlw_print_msg (msg);
 }
 
