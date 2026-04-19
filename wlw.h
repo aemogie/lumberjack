@@ -5,9 +5,7 @@
 #include <sys/un.h>
 #include <unistd.h>
 
-#include <errno.h>
 #include <stdio.h>
-
 
 #ifndef _WLW_H
 #define _WLW_H
@@ -17,17 +15,23 @@
   synchronous, trusted and known
 */
 
-#define wlw_assert(cond, fmt, ...)                      \
-  do                                                    \
-    {                                                   \
-      if (!(cond))                                      \
-        {                                               \
-          fprintf (stderr, "%s:%d: error: " fmt "\n",   \
-                   __FILE__, __LINE__, ##__VA_ARGS__);  \
-          exit (1);                                     \
-        }                                               \
-    }                                                   \
+#ifndef NDEBUG
+#define wlw_assert(cond, ...) _wlw_assert1(cond, __FILE__, __LINE__, __VA_ARGS__)
+#define _wlw_assert1(cond, file, line, ...) _wlw_assert2(cond, file, line, __VA_ARGS__)
+#define _wlw_assert2(cond, file, line, ...)				   \
+  do									   \
+    {									   \
+      if (!(cond))							   \
+	{								   \
+	  char str[] = file ":" #line ": error: " __VA_ARGS__ "\n";	   \
+	  write (2, str, sizeof (str) - 1);				   \
+	  _exit (1);							   \
+	}								   \
+    }									   \
   while (0)
+#else
+#define wlw_assert(cond, ...) (void)(cond)
+#endif // NDEBUG
 
 // declarations
 
@@ -86,7 +90,7 @@ typedef struct
 void wlw_open ();
 void wlw_send (const wlw_msg_view *msg);
 const wlw_msg_view *wlw_recv ();
-void wlw_print_msg (const wlw_msg_view *msg);
+static void wlw_print_msg (const wlw_msg_view *msg);
 
 static inline wlw_size wlw_msg_opcode (const wlw_msg_view *hdr);
 static inline uint16_t wlw_msg_size (const wlw_msg_view *hdr);
@@ -241,7 +245,7 @@ wlw_open ()
 {
   wlw_assert (wlw_sockfd == -1, "sockfd already initialised");
   wlw_sockfd = socket (AF_UNIX, SOCK_STREAM, 0);
-  wlw_assert (wlw_sockfd >= 0, "couldnt open socket: %s", strerror (errno));
+  wlw_assert (wlw_sockfd >= 0, "os error, recompile with perror");
 
   struct sockaddr_un addr = {
     .sun_family = AF_UNIX,
@@ -250,7 +254,7 @@ wlw_open ()
 
   int ret =
     connect (wlw_sockfd, (const struct sockaddr *) &addr, sizeof (addr));
-  wlw_assert (ret == 0, "connection failed: %s", strerror (errno));
+  wlw_assert (ret == 0, "os error, recompile with perror");
 }
 
 void
@@ -273,7 +277,7 @@ wlw__recv_refill ()
 
   int n = read (wlw_sockfd, &wlw_reader_buf[wlw_reader_end],
                 sizeof (wlw_reader_buf) - wlw_reader_end);
-  wlw_assert (n > 0, "read failed %s", strerror (errno));
+  wlw_assert (n > 0, "os error, recompile with perror");
   wlw_reader_end += n;
 
   return n;
@@ -304,7 +308,7 @@ wlw_recv ()
   return msg;
 }
 
-void
+static void
 wlw_print_msg (const wlw_msg_view *msg)
 {
   wlw_size size = wlw_msg_size (msg) - sizeof (wlw_header);
@@ -457,7 +461,7 @@ wl_display_r_sync (wlw_static_new_id callback)
 void
 wl_display_e_delete_id (const wlw_msg_view *msg)
 {
-  wlw_assert (msg->hdr.object.id == 1, "bad object");
+  wlw_assert (msg->hdr.object.id == 1);
   wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_display_i, "bad opcode");
 
   wlw_object obj = { msg->payload[0] };
@@ -544,7 +548,7 @@ wl_registry_r_bind (wl_registry self, wlw_uint name,
                     wlw_interface interface, wlw_uint version,
                     wlw_static_new_id id)
 {
-  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_registry_i, "bad object");
+  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_registry_i);
 
   // only for computing size
   typedef struct
@@ -586,7 +590,7 @@ enum _wl_compositor_opcodes
 wl_surface
 wl_compositor_r_create_surface (wl_compositor self, wlw_static_new_id id)
 {
-  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_compositor_i, "bad object");
+  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_compositor_i);
 
   struct
   {
@@ -621,7 +625,7 @@ enum _wl_surface_opcodes
 void
 wl_surface_r_commit (wl_surface self)
 {
-  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_surface_i, "bad object");
+  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_surface_i);
 
   struct
   {
@@ -646,7 +650,7 @@ xdg_surface
 xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
                                wlw_static_new_id id, wl_surface surface)
 {
-  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_wm_base_i, "bad object");
+  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_wm_base_i);
   wlw_assert (wlw_obj_typeof (surface.as_obj) == wl_surface_i,
               "bad argument");
   struct
@@ -683,7 +687,7 @@ enum _xdg_surface_r
 xdg_toplevel
 xdg_surface_r_get_toplevel (xdg_surface self, wlw_static_new_id id)
 {
-  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i, "bad object");
+  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i);
   struct
   {
     wlw_header hdr;
@@ -717,7 +721,7 @@ void
 xdg_surface_r_ack_configure (xdg_surface self,
                              xdg_surface_configure_serial serial)
 {
-  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i, "bad object");
+  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_surface_i);
 
   struct
   {
@@ -744,10 +748,8 @@ enum _xdg_toplevel_opcodes
 const xdg_toplevel_e_configure_args *
 xdg_toplevel_e_configure (const wlw_msg_view *msg)
 {
-  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i,
-              "bad object");
-  wlw_assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_configure,
-              "bad opcode");
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i);
+  wlw_assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_configure);
 
   // trailing dynamic member, castable to flexible member
   return (xdg_toplevel_e_configure_args *) msg->payload;
@@ -756,10 +758,8 @@ xdg_toplevel_e_configure (const wlw_msg_view *msg)
 void
 xdg_toplevel_e_wm_capabilities (const wlw_msg_view *msg)
 {
-  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i,
-              "bad object");
-  wlw_assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_wm_capabilities,
-              "bad opcode");
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i);
+  wlw_assert (wlw_msg_opcode (msg) == _xdg_toplevel_e_wm_capabilities);
 }
 
 #endif // _WLW_H
