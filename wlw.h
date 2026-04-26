@@ -109,6 +109,8 @@ typedef enum
   wl_display_i,
   wl_callback_i,
   wl_registry_i,
+  wl_seat_i,
+  wl_keyboard_i,
   wl_compositor_i,
   wl_surface_i,
   xdg_wm_base_i,
@@ -122,19 +124,21 @@ static const struct
   const wlw_word len;
   const char str[16];
 } wlw_interface_names[] = {
-  [_wlw_i_null] = { sizeof ("*invalid*"), "*invalid*" },
-  [wl_display_i] = { sizeof ("wl_display"), "wl_display" },
-  [wl_callback_i] = { sizeof ("wl_callback"), "wl_callback" },
-  [wl_registry_i] = { sizeof ("wl_registry"), "wl_registry" },
-  [wl_compositor_i] = { sizeof ("wl_compositor"), "wl_compositor" },
-  [wl_surface_i] = { sizeof ("wl_surface"), "wl_surface" },
-  [xdg_wm_base_i] = { sizeof ("xdg_wm_base"), "xdg_wm_base" },
-  [xdg_surface_i] = { sizeof ("xdg_surface"), "xdg_surface" },
-  [xdg_toplevel_i] = { sizeof ("xdg_toplevel"), "xdg_toplevel" },
+  { sizeof ("*invalid*"), "*invalid*" },
+  { sizeof ("wl_display"), "wl_display" },
+  { sizeof ("wl_callback"), "wl_callback" },
+  { sizeof ("wl_registry"), "wl_registry" },
+  { sizeof ("wl_seat"), "wl_seat" },
+  { sizeof ("wl_keyboard"), "wl_keyboard" },
+  { sizeof ("wl_compositor"), "wl_compositor" },
+  { sizeof ("wl_surface"), "wl_surface" },
+  { sizeof ("xdg_wm_base"), "xdg_wm_base" },
+  { sizeof ("xdg_surface"), "xdg_surface" },
+  { sizeof ("xdg_toplevel"), "xdg_toplevel" },
 };
 
-_Static_assert (sizeof (wlw_interface_names) /
-                sizeof (wlw_interface_names[0]) == _wlw_i_size,
+_Static_assert ((sizeof (wlw_interface_names) /
+                 sizeof (*wlw_interface_names)) == _wlw_i_size,
                 "wlw_interface_names out of sync with wlw_interface");
 
 static const wlw_object wlw_object_invalid = { 0 };
@@ -142,6 +146,8 @@ static const wlw_object wlw_object_invalid = { 0 };
 typedef struct { wlw_object as_obj; } wl_display;
 typedef struct { wlw_object as_obj; } wl_callback;
 typedef struct { wlw_object as_obj; } wl_registry;
+typedef struct { wlw_object as_obj; } wl_seat;
+typedef struct { wlw_object as_obj; } wl_keyboard;
 typedef struct { wlw_object as_obj; } wl_compositor;
 typedef struct { wlw_object as_obj; } wl_surface;
 typedef struct { wlw_object as_obj; } xdg_wm_base;
@@ -164,11 +170,7 @@ wl_callback wl_display_r_sync (wlw_static_new_id callback);
 void wl_display_e_delete_id (const wlw_msg_view *msg);
 
 // wl_callback
-typedef struct
-{
-  wlw_uint callback_data;
-} wl_callback_args;
-wl_callback_args wl_callback_e_done (const wlw_msg_view *msg);
+wlw_uint wl_callback_e_done (const wlw_msg_view *msg);
 const wlw_msg_view *wlw_recv_until_sync (wl_callback *callback);
 
 // wl_registry
@@ -182,6 +184,17 @@ typedef struct
   wlw_uint version;
 } wl_registry_e_global_args;
 wl_registry_e_global_args wl_registry_e_global (const wlw_msg_view *msg);
+
+// wl_seat
+wl_keyboard wl_seat_r_get_keyboard (wl_seat self, wlw_static_new_id id);
+typedef enum
+{
+  wl_seat_capability_pointer = 1 << 0,
+  wl_seat_capability_keyboard = 1 << 1,
+  wl_seat_capability_touch = 1 << 2,
+} wl_seat_capability;
+wl_seat_capability wl_seat_e_capabilities (const wlw_msg_view *msg);
+wlw_string *wl_seat_e_name (const wlw_msg_view *msg);
 
 // wl_compositor
 wl_surface wl_compositor_r_create_surface (wl_compositor self,
@@ -462,7 +475,7 @@ void
 wl_display_e_delete_id (const wlw_msg_view *msg)
 {
   wlw_assert (msg->hdr.object.id == 1);
-  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_display_i, "bad opcode");
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_display_i);
 
   wlw_object obj = { msg->payload[0] };
   wlw_obj_unbind (obj);
@@ -476,17 +489,13 @@ enum _wl_callback_opcodes
   _wl_callback_e_done = 0,
 };
 
-wl_callback_args
+wlw_uint
 wl_callback_e_done (const wlw_msg_view *msg)
 {
-  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_callback_i,
-              "bad object");
-  wlw_assert (wlw_msg_opcode (msg) == _wl_callback_e_done, "bad opcode");
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_callback_i);
+  wlw_assert (wlw_msg_opcode (msg) == _wl_callback_e_done);
 
-  wl_callback_args args = {
-    .callback_data = msg->payload[0],
-  };
-  return args;
+  return msg->payload[0];
 }
 
 const wlw_msg_view *
@@ -530,9 +539,8 @@ enum _wl_registry_opcodes
 wl_registry_e_global_args
 wl_registry_e_global (const wlw_msg_view *msg)
 {
-  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_registry_i,
-              "bad object");
-  wlw_assert (wlw_msg_opcode (msg) == _wl_registry_e_global, "bad opcode");
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_registry_i);
+  wlw_assert (wlw_msg_opcode (msg) == _wl_registry_e_global);
 
   const wlw_word *head = msg->payload;
 
@@ -579,6 +587,51 @@ wl_registry_r_bind (wl_registry self, wlw_uint name,
   return wlw_obj_bind (interface, id);
 }
 
+// wl_seat
+
+enum _wl_seat_opcodes
+{
+  _wl_seat_r_get_pointer = 0,
+  _wl_seat_r_get_keyboard,
+  _wl_seat_e_capabilities = 0,
+  _wl_seat_e_name,
+};
+
+wl_seat_capability
+wl_seat_e_capabilities (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_seat_i);
+  wlw_assert (wlw_msg_opcode (msg) == _wl_seat_e_capabilities);
+
+  return msg->payload[0];
+}
+
+wlw_string *
+wl_seat_e_name (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_seat_i);
+  wlw_assert (wlw_msg_opcode (msg) == _wl_seat_e_name);
+
+  return (wlw_string *) msg->payload;
+}
+
+wl_keyboard
+wl_seat_r_get_keyboard (wl_seat self, wlw_static_new_id id)
+{
+  wlw_assert (wlw_obj_typeof (self.as_obj) == wl_seat_i);
+
+  struct
+  {
+    wlw_header hdr;
+    wlw_static_new_id id;
+  } msg;
+  msg.id = id;
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode = wlw_size_opcode (sizeof (msg), _wl_registry_r_bind);
+  wlw_send ((wlw_msg_view *) &msg);
+  wl_keyboard ret = { wlw_obj_bind (wl_keyboard_i, id) };
+  return ret;
+}
 
 // wl_compositor
 
@@ -651,8 +704,7 @@ xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
                                wlw_static_new_id id, wl_surface surface)
 {
   wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_wm_base_i);
-  wlw_assert (wlw_obj_typeof (surface.as_obj) == wl_surface_i,
-              "bad argument");
+  wlw_assert (wlw_obj_typeof (surface.as_obj) == wl_surface_i);
   struct
   {
     wlw_header hdr;
@@ -707,9 +759,8 @@ xdg_surface_r_get_toplevel (xdg_surface self, wlw_static_new_id id)
 xdg_surface_configure_serial
 xdg_surface_e_configure (const wlw_msg_view *msg)
 {
-  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_surface_i,
-              "bad object");
-  wlw_assert (wlw_msg_opcode (msg) == _xdg_surface_e_configure, "bad opcode");
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_surface_i);
+  wlw_assert (wlw_msg_opcode (msg) == _xdg_surface_e_configure);
 
   xdg_surface_configure_serial ret = {
     .serial = msg->payload[0],
@@ -777,6 +828,7 @@ main ()
   wl_registry registry = wl_display_r_get_registry (wlw_obj_genid ());
 
   wl_compositor compositor = { wlw_object_invalid };
+  wl_seat seat = { wlw_object_invalid };
   xdg_wm_base wm_base = { wlw_object_invalid };
   const wlw_msg_view *msg;
   wl_callback syncpoint = { wlw_object_invalid };
@@ -798,6 +850,13 @@ main ()
             wl_registry_r_bind (registry, args.name, xdg_wm_base_i,
                                 args.version, wlw_obj_genid ());
         }
+      else if (strcmp (iname, wlw_interface_names[wl_seat_i].str) == 0)
+        {
+          seat.as_obj =
+            wl_registry_r_bind (registry, args.name, wl_seat_i,
+                                args.version, wlw_obj_genid ());
+          (void) seat;
+        }
     }
 
   wl_surface surface =
@@ -808,7 +867,14 @@ main ()
     xdg_surface_r_get_toplevel (shell_surface, wlw_obj_genid ());
   (void) toplevel;
   wl_surface_r_commit (surface);
-  xdg_toplevel_e_wm_capabilities (wlw_recv ());
+
+  (void) wl_seat_e_name (wlw_recv ());
+  wl_seat_capability seat_caps = wl_seat_e_capabilities (wlw_recv ());
+  wlw_assert (seat_caps & wl_seat_capability_keyboard, "no keyboard found");
+  wl_keyboard keyboard = wl_seat_r_get_keyboard (seat, wlw_obj_genid ());
+  (void) keyboard;
+
+  (void) xdg_toplevel_e_wm_capabilities (wlw_recv ());
   const xdg_toplevel_e_configure_args *args =
     xdg_toplevel_e_configure (wlw_recv ());
 
