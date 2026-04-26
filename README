@@ -3,37 +3,17 @@
 
 trying to write a text editor in c. possibly my first ever proper c software.
 
++ ~wlw.h~ is a bare minimum wayland client im working on right now
++ todo: vulkan loader
++ todo: rest of the editor
+
 * goals
-+ keep it simple
-+ unity build
-  + +no explicit link dependencies (ideally compiling and running is ~cc ./main.c && ./a.out~)+
-  + seems the linux world hates simple software. ill be linking against crap
-+ no platforms supported other than what i use. dont even try to
-  wrangle cross platform
-+ multi threading
-  + not sure how applicable it is
-  + the basic architecture is pretty sequential
-  + and the actual rendering is on the gpu
-  + maybe will introduce when things that are too slow to be on the render
-    loop are introduced? (e.g. parsing, highlighting, LSPs, etc)
-  + on other hand wanna see how far i can go without these tho
-
-* architecture (so far)
-+ text file -> gap buffer (mmap ideally for simplicity)
-+ gap buffer -> viewport
-+ window input -> input handling (a massive switch case or jump table)
-+ input [ascii printable] -> gap buffer
-+ input [control] -> viewport's cursor
-
-** viewport
-this is the hard part for me. need to iron this out.
-
-not graphical viewport, just char[w * h]. 0x20 (space) to pad the grid
-
-some intermediate array of string view cache for some const N lines. each element is a line
-
-use line list to refresh viewport buffer
-
-also remember to update line view on inputs (this sounds extrememly finicky)
-
-both line cache and viewport buffer can be a ring buffer. i think both have similar benefits
++ single tu builds (ideally ~cc main.c -o ~/.local/bin/editor && editor~ to run)
++ all configured right in source, no configs or runtimes
+  + subgoal: keep it readable enough so you can orient yourself quickly
++ dont do useless work, when we know the system invariants, assume as much as we can
++ avoid external libraries where possible
+  + exception: mesa vulkan drivers icds
+  + avoid codegen (just complicates the build process and readability)
++ hardware accelerated where it makes sense
++ stall and block where it makes sense (proper idle when not focused, no background work)
