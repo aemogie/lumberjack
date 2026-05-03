@@ -235,6 +235,10 @@ typedef enum
 } wl_seat_capability;
 wl_seat_capability wl_seat_e_capabilities (const wlw_msg_view *msg);
 wlw_string *wl_seat_e_name (const wlw_msg_view *msg);
+
+// wl_keyboard
+void wl_keyboard_e_keymap (const wlw_msg_view *msg);
+void wl_keyboard_e_repeat_info (const wlw_msg_view *msg);
 
 // global helpers
 
@@ -813,6 +817,35 @@ wl_seat_r_get_keyboard (wl_seat self, wlw_static_new_id id)
   return ret;
 }
 
+// wl_keyboard
+
+enum _wl_keyboard_opcodes
+{
+  _wl_keyboard_e_keymap = 0,
+  _wl_keyboard_e_enter,
+  _wl_keyboard_e_leave,
+  _wl_keyboard_e_key,
+  _wl_keyboard_e_modifiers,
+  _wl_keyboard_e_repeat_info,
+};
+
+// just consume for now, need to redo buffering for fds, which chances are i may never need. look into it when i need it
+void
+wl_keyboard_e_keymap (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_keyboard_i);
+  wlw_assert (wlw_msg_opcode (msg) == _wl_keyboard_e_keymap);
+  // since we read it via wlw_read, the kernel probably closes it automatically, dont quote me
+}
+
+void
+wl_keyboard_e_repeat_info (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_keyboard_i);
+  wlw_assert (wlw_msg_opcode (msg) == _wl_keyboard_e_repeat_info);
+  // since we read it via wlw_read, the kernel probably closes it automatically, dont quote me
+}
+
 #endif // _WLW_H
 
 #ifdef WLW_EXAMPLE
@@ -881,6 +914,9 @@ main ()
 
   wl_keyboard keyboard = wl_seat_r_get_keyboard (seat, wlw_obj_genid ());
   (void) keyboard;
+  wl_keyboard_e_keymap (wlw_recv ());
+  wl_keyboard_e_repeat_info (wlw_recv ());
+
   printf ("todo list:\n");
   while ((msg = wlw_recv_until_sync (&syncpoint)))
     wlw_print_msg (msg);
