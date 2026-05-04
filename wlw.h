@@ -6,6 +6,7 @@
 #include <sys/un.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <linux/input.h>
 
 #include <stdio.h>
 
@@ -107,7 +108,6 @@ static inline void wlw_write_string (wlw_word **head, wlw_word len,
                                      const char *str);
 
 // bookkeeping
-#define WLW_MAX_OBJECT_COUNT 32
 wlw_static_new_id wlw_obj_genid ();
 wlw_object wlw_obj_bind (wlw_interface interface, wlw_static_new_id new_id);
 void wlw_obj_unbind (wlw_object object);
@@ -197,6 +197,10 @@ enum _wlw_opcode
   wl_surface_r_set_opaque_region_op,
   wl_surface_r_set_input_region_op,
   wl_surface_r_commit_op,
+  wl_surface_e_enter_op = 0,
+  wl_surface_e_leave_op,
+  wl_surface_e_preferred_buffer_scale_op,
+  wl_surface_e_preferred_buffer_transform_op,
   // xdg_wm_base
   xdg_wm_base_r_destroy_op = 0,
   xdg_wm_base_r_create_positioner_op,
@@ -232,6 +236,8 @@ enum _wlw_opcode
   wl_shm_e_format_op = 0,
   // wl_shm_pool
   wl_shm_pool_r_create_buffer_op = 0,
+  // wl_buffer
+  wl_buffer_e_release_op = 0,
 };
 
 // protocols
@@ -269,11 +275,19 @@ wl_surface wl_compositor_r_create_surface (wl_compositor self,
 void wl_surface_r_commit (wl_surface self);
 void wl_surface_r_attach (wl_surface self, wl_buffer buffer, wlw_uint x,
                           wlw_uint y);
+wlw_uint wl_surface_e_preferred_buffer_scale (const wlw_msg_view *msg);
+wlw_uint wl_surface_e_preferred_buffer_transform (const wlw_msg_view *msg);
 
 // xdg_wm_base
 xdg_surface xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
                                            wlw_static_new_id id,
                                            wl_surface surface);
+typedef struct
+{
+  wlw_uint serial;
+} xdg_wm_base_e_ping_serial;
+xdg_wm_base_e_ping_serial xdg_wm_base_e_ping (const wlw_msg_view *msg);
+void xdg_wm_base_r_pong (xdg_wm_base self, xdg_wm_base_e_ping_serial serial);
 
 // xdg_surface
 xdg_toplevel xdg_surface_r_get_toplevel (xdg_surface self,
@@ -303,6 +317,8 @@ const xdg_toplevel_e_configure_args *xdg_toplevel_e_configure (const
 // note: dont care for the response, skip for now
 void xdg_toplevel_e_wm_capabilities (const wlw_msg_view *msg);
 
+void xdg_toplevel_e_close (const wlw_msg_view *msg);
+
 // wl_seat
 wl_keyboard wl_seat_r_get_keyboard (wl_seat self, wlw_static_new_id id);
 typedef enum
@@ -317,10 +333,60 @@ wlw_string *wl_seat_e_name (const wlw_msg_view *msg);
 // wl_keyboard
 void wl_keyboard_e_keymap (const wlw_msg_view *msg);
 void wl_keyboard_e_repeat_info (const wlw_msg_view *msg);
+typedef struct
+{
+  wlw_uint serial;
+  wl_surface surface;
+  wlw_array keys;
+} wl_keyboard_e_enter_args;
+const wl_keyboard_e_enter_args *wl_keyboard_e_enter (const wlw_msg_view *msg);
+typedef struct
+{
+  wlw_uint serial;
+  wlw_uint mods_depressed;
+  wlw_uint mods_latched;
+  wlw_uint mods_locked;
+  wlw_uint group;
+} wl_keyboard_e_modifiers_args;
+const wl_keyboard_e_modifiers_args *wl_keyboard_e_modifiers (const
+                                                             wlw_msg_view
+                                                             *msg);
+typedef struct
+{
+  wlw_uint serial;
+  wlw_uint time;
+  wlw_uint key;
+  union
+  {
+    wlw_uint as_raw;
+    enum
+    {
+      wl_keyboard_key_state_released = 0,
+      wl_keyboard_key_state_pressed,
+      wl_keyboard_key_state_repeated,
+    } as_enum;
+  } state;
+} wl_keyboard_e_key_args;
+_Static_assert (sizeof (((wl_keyboard_e_key_args *)0)->state) ==
+                sizeof (wlw_uint));
+const wl_keyboard_e_key_args *wl_keyboard_e_key (const wlw_msg_view *msg);
+
+static const char wlw_evdev_to_ascii[] = {
+  // alphabet
+  [KEY_A] = 'A',[KEY_B] = 'B',[KEY_C] = 'C',[KEY_D] = 'D',[KEY_E] = 'E',
+  [KEY_F] = 'F',[KEY_G] = 'G',[KEY_H] = 'H',[KEY_I] = 'I',[KEY_J] = 'J',
+  [KEY_K] = 'K',[KEY_L] = 'L',[KEY_M] = 'M',[KEY_N] = 'N',[KEY_O] = 'O',
+  [KEY_P] = 'P',[KEY_Q] = 'Q',[KEY_R] = 'R',[KEY_S] = 'S',[KEY_T] = 'T',
+  [KEY_U] = 'U',[KEY_V] = 'V',[KEY_W] = 'W',[KEY_X] = 'X',[KEY_Y] = 'Y',
+  [KEY_Z] = 'Z',
+  // numbers
+  [KEY_1] = '1',[KEY_2] = '2',[KEY_3] = '3',[KEY_4] = '4',[KEY_5] = '5',
+  [KEY_6] = '6',[KEY_7] = '7',[KEY_8] = '8',[KEY_9] = '9',[KEY_0] = '0',
+};
 
 // wl_shm
-wl_shm_pool wl_shm_r_create_pool (wl_shm self, wlw_static_new_id id, int fd,
-                                  wlw_uint size);
+wl_shm_pool wl_shm_r_create_pool (wl_shm self, wlw_static_new_id id,
+                                  int fd, wlw_uint size);
 typedef enum
 {
   wl_shm_format_argb8888 = 0,
@@ -331,8 +397,12 @@ wl_shm_format wl_shm_e_format (const wlw_msg_view *msg);
 // wl_shm_pool
 wl_buffer
 wl_shm_pool_r_create_buffer (wl_shm_pool self, wlw_static_new_id id,
-                             wlw_uint offset, wlw_uint width, wlw_uint height,
-                             wlw_uint stride, wl_shm_format format);
+                             wlw_uint offset, wlw_uint width,
+                             wlw_uint height, wlw_uint stride,
+                             wl_shm_format format);
+
+// wl_buffer
+void wl_buffer_e_release (const wlw_msg_view *msg);
 
 // global helpers
 
@@ -519,7 +589,8 @@ wlw_static_new_id
 wlw_obj_genid ()
 {
   wlw_static_new_id new_id = { wlw_obj_free_tail++ };
-  wlw_assert (new_id.repr < (sizeof (wlw_obj_map) / sizeof (wlw_obj_map[0])),
+  wlw_assert (new_id.repr <
+              (sizeof (wlw_obj_map) / sizeof (wlw_obj_map[0])),
               "ran out of ids");
   return new_id;
 }
@@ -586,6 +657,19 @@ wlw_recv_for_opcode (wlw_interface interface, wlw_opcode opcode)
       return msg;
     }
   return NULL;
+}
+
+const wlw_msg_view *
+wlw_recv_until_opcode (wlw_interface interface, wlw_opcode opcode)
+{
+  const wlw_msg_view *msg = wlw_peek ();
+  if (wlw_obj_typeof (msg->hdr.object) == interface &&
+      wlw_msg_opcode (msg) == opcode)
+    {
+      return NULL;
+    }
+  wlw_reader_next += wlw_msg_size (msg);
+  return msg;
 }
 
 // wl_display
@@ -766,6 +850,23 @@ wl_surface_r_attach (wl_surface self, wl_buffer buffer, wlw_uint x,
   wlw_send ((wlw_msg_view *) &msg);
 }
 
+wlw_uint
+wl_surface_e_preferred_buffer_scale (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_surface_i);
+  wlw_assert (wlw_msg_opcode (msg) == wl_surface_e_preferred_buffer_scale_op);
+  return msg->payload[0];
+}
+
+wlw_uint
+wl_surface_e_preferred_buffer_transform (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_surface_i);
+  wlw_assert (wlw_msg_opcode (msg) ==
+              wl_surface_e_preferred_buffer_transform_op);
+  return msg->payload[0];
+}
+
 // xdg_wm_base
 xdg_surface
 xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
@@ -789,6 +890,31 @@ xdg_wm_base_r_get_xdg_surface (xdg_wm_base self,
 
   xdg_surface ret = { wlw_obj_bind (xdg_surface_i, id) };
   return ret;
+}
+
+xdg_wm_base_e_ping_serial
+xdg_wm_base_e_ping (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_wm_base_i);
+  wlw_assert (wlw_msg_opcode (msg) == xdg_wm_base_e_ping_op);
+  xdg_wm_base_e_ping_serial ret = { msg->payload[0] };
+  return ret;
+}
+
+void
+xdg_wm_base_r_pong (xdg_wm_base self, xdg_wm_base_e_ping_serial serial)
+{
+  wlw_assert (wlw_obj_typeof (self.as_obj) == xdg_wm_base_i);
+  struct
+  {
+    wlw_header hdr;
+    xdg_wm_base_e_ping_serial serial;
+  } msg = {
+    .serial = serial,
+  };
+  msg.hdr.object = self.as_obj;
+  msg.hdr.size_opcode = wlw_size_opcode (sizeof (msg), xdg_wm_base_r_pong_op);
+  wlw_send ((wlw_msg_view *) &msg);
 }
 
 // xdg_surface
@@ -861,6 +987,13 @@ xdg_toplevel_e_wm_capabilities (const wlw_msg_view *msg)
   wlw_assert (wlw_msg_opcode (msg) == xdg_toplevel_e_wm_capabilities_op);
 }
 
+void
+xdg_toplevel_e_close (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == xdg_toplevel_i);
+  wlw_assert (wlw_msg_opcode (msg) == xdg_toplevel_e_close_op);
+}
+
 // wl_seat
 wl_seat_capability
 wl_seat_e_capabilities (const wlw_msg_view *msg)
@@ -921,6 +1054,30 @@ wl_keyboard_e_repeat_info (const wlw_msg_view *msg)
   // automatically, dont quote me
 }
 
+const wl_keyboard_e_enter_args *
+wl_keyboard_e_enter (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_keyboard_i);
+  wlw_assert (wlw_msg_opcode (msg) == wl_keyboard_e_enter_op);
+  return (const wl_keyboard_e_enter_args *) msg->payload;
+}
+
+const wl_keyboard_e_modifiers_args *
+wl_keyboard_e_modifiers (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_keyboard_i);
+  wlw_assert (wlw_msg_opcode (msg) == wl_keyboard_e_modifiers_op);
+  return (const wl_keyboard_e_modifiers_args *) msg->payload;
+}
+
+const wl_keyboard_e_key_args *
+wl_keyboard_e_key (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_keyboard_i);
+  wlw_assert (wlw_msg_opcode (msg) == wl_keyboard_e_key_op);
+  return (const wl_keyboard_e_key_args *) msg->payload;
+}
+
 // wl_shm
 wl_shm_pool
 wl_shm_r_create_pool (wl_shm self, wlw_static_new_id id, int fd,
@@ -958,8 +1115,9 @@ wl_shm_e_format (const wlw_msg_view *msg)
 // wl_shm_pool
 wl_buffer
 wl_shm_pool_r_create_buffer (wl_shm_pool self, wlw_static_new_id id,
-                             wlw_uint offset, wlw_uint width, wlw_uint height,
-                             wlw_uint stride, wl_shm_format format)
+                             wlw_uint offset, wlw_uint width,
+                             wlw_uint height, wlw_uint stride,
+                             wl_shm_format format)
 {
   wlw_assert (wlw_obj_typeof (self.as_obj) == wl_shm_pool_i);
 
@@ -988,6 +1146,15 @@ wl_shm_pool_r_create_buffer (wl_shm_pool self, wlw_static_new_id id,
   wl_buffer ret = { wlw_obj_bind (wl_buffer_i, id) };
   return ret;
 }
+
+// wl_buffer
+void
+wl_buffer_e_release (const wlw_msg_view *msg)
+{
+  wlw_assert (wlw_obj_typeof (msg->hdr.object) == wl_buffer_i);
+  wlw_assert (wlw_msg_opcode (msg) == wl_buffer_e_release_op);
+}
+
 #endif // _WLW_H
 
 #ifdef WLW_EXAMPLE
@@ -1027,8 +1194,9 @@ main ()
         }
       else if (strcmp (iname, wlw_interface_names[wl_seat_i].str) == 0)
         {
-          seat.as_obj = wl_registry_r_bind (registry, args.name, wl_seat_i,
-                                            args.version, wlw_obj_genid ());
+          seat.as_obj =
+            wl_registry_r_bind (registry, args.name, wl_seat_i,
+                                args.version, wlw_obj_genid ());
         }
       else if (strcmp (iname, wlw_interface_names[wl_shm_i].str) == 0)
         {
@@ -1075,10 +1243,10 @@ main ()
   wlw_word *fb = mmap (NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
   (void) fb;
   wl_shm_pool pool = wl_shm_r_create_pool (shm, wlw_obj_genid (), fd, size);
-  wl_buffer buf = wl_shm_pool_r_create_buffer (pool, wlw_obj_genid (),
-                                               0, args->width, args->height,
-                                               args->width * 4,
-                                               wl_shm_format_xrgb8888);
+  wl_buffer buf =
+    wl_shm_pool_r_create_buffer (pool, wlw_obj_genid (), 0, args->width,
+                                 args->height, args->width * 4,
+                                 wl_shm_format_xrgb8888);
   for (wlw_uint y = 0; y < args->height; y++)
     for (wlw_uint x = 0; x < args->width; x++)
       fb[y * args->width + x] = 0xFF000000
@@ -1087,7 +1255,73 @@ main ()
   wl_surface_r_attach (surface, buf, 0, 0);
   wl_surface_r_commit (surface);
 
-  while (true);
+  while ((msg =
+          wlw_recv_until_opcode (xdg_toplevel_i, xdg_toplevel_e_close_op)))
+    {
+      switch (wlw_obj_typeof (msg->hdr.object))
+        {
+        case xdg_toplevel_i:
+          wlw_assert (wlw_msg_opcode (msg) == xdg_toplevel_e_configure_op);
+          args = xdg_toplevel_e_configure (msg);
+          break;
+        case wl_surface_i:
+          switch (wlw_msg_opcode (msg))
+            {
+            case wl_surface_e_preferred_buffer_scale_op:
+              wl_surface_e_preferred_buffer_scale (msg);
+              break;
+            case wl_surface_e_preferred_buffer_transform_op:
+              wl_surface_e_preferred_buffer_transform (msg);
+              break;
+            }
+          break;
+        case wl_keyboard_i:
+          switch (wlw_msg_opcode (msg))
+            {
+            case wl_keyboard_e_enter_op:
+              {
+                const wl_keyboard_e_enter_args *enter_args =
+                  wl_keyboard_e_enter (msg);
+                wlw_assert (enter_args->surface.as_obj.id ==
+                            surface.as_obj.id);
+              } break;
+            case wl_keyboard_e_modifiers_op:
+              wl_keyboard_e_modifiers (msg);
+              break;
+            case wl_keyboard_e_key_op:
+              {
+                //wlw_print_msg (msg);
+                const wl_keyboard_e_key_args *ev = wl_keyboard_e_key (msg);
+                if (ev->state.as_enum == wl_keyboard_key_state_released)
+                  printf ("pressed key %c\n", wlw_evdev_to_ascii[ev->key]);
+              }
+              break;
+            default:
+              // wlw_print_msg (msg);
+              break;
+            }
+          break;
+        case wl_buffer_i:
+          wlw_assert (wlw_msg_opcode (msg) == wl_buffer_e_release_op);
+          wl_buffer_e_release (msg);
+          break;
+        case xdg_surface_i:
+          wlw_assert (wlw_msg_opcode (msg) == xdg_surface_e_configure_op);
+          xdg_surface_r_ack_configure (shell_surface,
+                                       xdg_surface_e_configure (msg));
+          break;
+        case xdg_wm_base_i:
+          wlw_assert (wlw_msg_opcode (msg) == xdg_wm_base_e_ping_op);
+          xdg_wm_base_r_pong (wm_base, xdg_wm_base_e_ping (msg));
+          break;
+        default:
+          wlw_print_msg (msg);
+          break;
+        }
+    }
+
+  xdg_toplevel_e_close (wlw_recv ());
+
   printf ("todo list:\n");
   wl_callback syncpoint = { wlw_object_invalid };
   while ((msg = wlw_recv_until_sync (&syncpoint)))
