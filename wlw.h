@@ -21,16 +21,16 @@
 #ifndef NDEBUG
 #define wlw_assert(cond, ...) _wlw_assert1(cond, __FILE__, __LINE__, __VA_ARGS__)
 #define _wlw_assert1(cond, file, line, ...) _wlw_assert2(cond, file, line, __VA_ARGS__)
-#define _wlw_assert2(cond, file, line, ...)				   \
-  do									   \
-    {									   \
-      if (!(cond))							   \
-	{								   \
-	  char str[] = file ":" #line ": error: " __VA_ARGS__ "\n";	   \
-	  write (2, str, sizeof (str) - 1);				   \
-	  _exit (1);							   \
-	}								   \
-    }									   \
+#define _wlw_assert2(cond, file, line, ...)                                \
+  do                                                                       \
+    {                                                                      \
+      if (!(cond))                                                         \
+        {                                                                  \
+          char str[] = file ":" #line ": error: " __VA_ARGS__ "\n";        \
+          write (2, str, sizeof (str) - 1);                                \
+          _exit (1);                                                       \
+        }                                                                  \
+    }                                                                      \
   while (0)
 #else
 #define wlw_assert(cond, ...) (void)(cond)
