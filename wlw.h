@@ -382,6 +382,8 @@ static const char wlw_evdev_to_ascii[] = {
   // numbers
   [KEY_1] = '1',[KEY_2] = '2',[KEY_3] = '3',[KEY_4] = '4',[KEY_5] = '5',
   [KEY_6] = '6',[KEY_7] = '7',[KEY_8] = '8',[KEY_9] = '9',[KEY_0] = '0',
+  // commands
+  [KEY_ENTER] = '\n',[KEY_SPACE] = ' ',
 };
 
 // wl_shm
@@ -1246,14 +1248,17 @@ main ()
   wl_buffer buf =
     wl_shm_pool_r_create_buffer (pool, wlw_obj_genid (), 0, args->width,
                                  args->height, args->width * 4,
-                                 wl_shm_format_xrgb8888);
+                                 wl_shm_format_argb8888);
   for (wlw_uint y = 0; y < args->height; y++)
     for (wlw_uint x = 0; x < args->width; x++)
-      fb[y * args->width + x] = 0xFF000000
+      fb[y * args->width + x] = 0x00000000
         | (((wlw_uint) (0xFF * (y * 1.f / args->height))) << 8)
         | (((wlw_uint) (0xFF * (x * 1.f / args->width))) << 0);
   wl_surface_r_attach (surface, buf, 0, 0);
   wl_surface_r_commit (surface);
+
+  char text_buf[64];
+  char *cursor = text_buf;
 
   while ((msg =
           wlw_recv_until_opcode (xdg_toplevel_i, xdg_toplevel_e_close_op)))
@@ -1292,12 +1297,26 @@ main ()
               {
                 //wlw_print_msg (msg);
                 const wl_keyboard_e_key_args *ev = wl_keyboard_e_key (msg);
-                if (ev->state.as_enum == wl_keyboard_key_state_released)
-                  printf ("pressed key %c\n", wlw_evdev_to_ascii[ev->key]);
+                if (ev->state.as_enum != wl_keyboard_key_state_released)
+                  break;
+                char key = wlw_evdev_to_ascii[ev->key];
+                switch (wlw_evdev_to_ascii[ev->key])
+                  {
+                  case '\n':
+                    *cursor = '\0';
+                    printf ("%s\n", text_buf);
+                    cursor = text_buf;
+                    break;
+                  case 'A' ... 'Z':
+                    *(cursor++) = key + 32;
+                    break;
+                  case '\t':
+                  case ' ':
+                    *(cursor++) = key;
+                    break;
+                  }
+                break;
               }
-              break;
-            default:
-              // wlw_print_msg (msg);
               break;
             }
           break;
