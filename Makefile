@@ -3,8 +3,8 @@ CC=gcc
 CFLAGS=-Wall -Wextra -Werror -static -Oz
 
 
-default: wlw
-	./wlw
+default: main
+	./main
 
 wlw: wlw.h
 	${CC} ${CFLAGS} -x c wlw.h -DWLW_EXAMPLE -o wlw
