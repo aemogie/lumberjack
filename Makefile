@@ -1,7 +1,8 @@
 SRCS=wlw.c main.c
 CC=gcc
-CFLAGS=-ansi -pedantic -Wall -Wextra -Werror -Wno-unused-function -static -Oz
-
+CFLAGS=-ansi -pedantic -Wall -Wextra -Werror -Wno-unused-function
+CFLAGS+=-ggdb -O0
+CFLAGS+=-static # -Oz
 
 default: main
 	./main
