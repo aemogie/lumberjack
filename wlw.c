@@ -17,11 +17,26 @@ static int wlw_sockfd = -1;
 static void
 wlw_open (void)
 {
+  const char *runtime_dir, *wayland_display;
   struct sockaddr_un addr;
-  wlw_sockfd = socket (AF_UNIX, SOCK_STREAM, 0);
+
   addr.sun_family = AF_UNIX;
-  sprintf (addr.sun_path, "%s/%s", getenv ("XDG_RUNTIME_DIR"),
-           getenv ("WAYLAND_DISPLAY"));
+  runtime_dir = getenv ("XDG_RUNTIME_DIR");
+  wayland_display = getenv ("WAYLAND_DISPLAY");
+
+  if (runtime_dir == NULL || *runtime_dir == '\0')
+    runtime_dir = "/run/user/1000";
+  if (wayland_display == NULL || *wayland_display == '\0')
+    wayland_display = "wayland-0";
+
+  assert (strlen (runtime_dir) + 1 + strlen (wayland_display) + 1 <=
+          sizeof (addr.sun_path) && "socket path is too long");
+
+  strcpy (addr.sun_path, runtime_dir);
+  strcat (addr.sun_path, "/");
+  strcat (addr.sun_path, wayland_display);
+
+  wlw_sockfd = socket (AF_UNIX, SOCK_STREAM, 0);
   connect (wlw_sockfd, (const struct sockaddr *) &addr, sizeof (addr));
 }
 
@@ -320,11 +335,6 @@ wlw_dispatch (const struct wlw_untyped *msg)
   wlw_callback cb = wlw_dispatch_table.as_array[entry];
   if (cb)
     cb (msg);
-#ifndef NDEBUG
-  else
-    fprintf (stderr, "ignoring %s %d\n", wlw_interface_names[interface].str,
-             opcode);
-#endif
 }
 
 struct wl_display_r_get_registry
