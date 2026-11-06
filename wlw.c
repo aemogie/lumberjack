@@ -404,6 +404,17 @@ struct xdg_wm_base_r_get_xdg_surface
   wlw_word surface;
 };
 
+struct xdg_wm_base_e_ping
+{
+  wlw_word serial;
+};
+
+struct xdg_wm_base_r_pong
+{
+  struct wlw_header hdr;
+  wlw_word serial;
+};
+
 struct xdg_surface_r_get_toplevel
 {
   struct wlw_header hdr;
